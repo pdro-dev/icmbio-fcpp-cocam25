@@ -170,3 +170,84 @@ else:
                 if exibir_itens_omissos and not itens_fora.empty:
                     st.subheader(f"🔎 Itens Omissos na Soma - {coluna}")
                     st.dataframe(itens_fora, use_container_width=True)
+
+
+        # 📌 Seção de visualização detalhada da iniciativa selecionada
+        st.divider()
+        
+        # 📌 Seção de visualização detalhada da iniciativa selecionada
+        st.subheader("📋 Relatório Executivo da Iniciativa")
+
+        iniciativa_selecionada = st.selectbox(
+            "Selecione uma iniciativa:", df["Nome da Proposta/Iniciativa Estruturante"].unique()
+        )
+
+        df_iniciativa = df[df["Nome da Proposta/Iniciativa Estruturante"] == iniciativa_selecionada]
+
+        if not df_iniciativa.empty:
+            demandante = df_iniciativa["DEMANDANTE"].iloc[0]
+            gr_list = sorted(df_iniciativa["GR"].unique())
+            bioma_list = sorted(df_iniciativa["BIOMA"].unique())
+            uf_list = sorted(df_iniciativa["UF"].unique())
+            valor_total_alocado = df_iniciativa["VALOR TOTAL ALOCADO"].sum()
+            valor_total_iniciativa = df_iniciativa["Valor Total da Iniciativa"].sum()
+
+            unidades = df_iniciativa[["Unidade de Conservação", "VALOR TOTAL ALOCADO", "Valor Total da Iniciativa"]]
+
+            # 📌 Layout do relatório
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("#### 📌 Informações Gerais")
+                st.markdown(f"**📌 Demandante:** {demandante}")
+
+                # 📌 Exibição compacta de listas com tags estilizadas
+                st.markdown("**📍 Gerências Regionais:**", unsafe_allow_html=True)
+                st.markdown(" ".join([f"<span class='tag'>{gr}</span>" for gr in gr_list]), unsafe_allow_html=True)
+
+                st.markdown("**🌿 Biomas:**", unsafe_allow_html=True)
+                st.markdown(" ".join([f"<span class='tag'>{bioma}</span>" for bioma in bioma_list]), unsafe_allow_html=True)
+
+                st.markdown("**📍 UFs:**", unsafe_allow_html=True)
+                st.markdown(" ".join([f"<span class='tag'>{uf}</span>" for uf in uf_list]), unsafe_allow_html=True)
+
+            with col2:
+                st.markdown("#### 📊 Valores Financeiros")
+                st.metric(label="💰 Valor Total Alocado", value=f"R$ {valor_total_alocado:,.2f}")
+                st.metric(label="🏗 Valor Total da Iniciativa", value=f"R$ {valor_total_iniciativa:,.2f}")
+                st.divider()
+
+            # 📌 Tabelas de Unidades de Conservação
+            st.markdown("### 🌍 Unidades de Conservação e Valores")
+
+            unidades_alocadas = unidades[unidades["VALOR TOTAL ALOCADO"] > 0]
+            unidades_iniciativa = unidades[unidades["Valor Total da Iniciativa"] > 0]
+
+            st.markdown("#### 💰 Valores Alocados")
+            st.dataframe(
+                unidades_alocadas.rename(columns={"VALOR TOTAL ALOCADO": "Valor Alocado (R$)"}),
+                hide_index=True,
+                use_container_width=True
+            )
+
+            st.markdown("#### 🏗 Valores da Iniciativa")
+            st.dataframe(
+                unidades_iniciativa.rename(columns={"Valor Total da Iniciativa": "Valor da Iniciativa (R$)"}),
+                hide_index=True,
+                use_container_width=True
+            )
+
+        # 📌 CSS para as tags minimalistas
+        st.markdown("""
+            <style>
+            .tag {
+                display: inline-block;
+                background-color: #2c3e50;
+                color: white;
+                padding: 5px 10px;
+                margin: 3px;
+                border-radius: 12px;
+                font-size: 12px;
+            }
+            </style>
+            """, unsafe_allow_html=True)
