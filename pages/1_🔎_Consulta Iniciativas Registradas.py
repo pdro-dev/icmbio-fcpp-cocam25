@@ -44,7 +44,13 @@ else:
                 unsafe_allow_html=True
             )
             if st.button("🧹", help="Limpar Filtros"):
-                st.session_state.clear()
+                # Resetando os filtros para "Todos"
+                st.session_state["filtro_demandante"] = "Todos"
+                st.session_state["filtro_uc"] = "Todas"
+                st.session_state["filtro_gr"] = "Todos"
+                st.session_state["filtro_uf"] = "Todas"
+                st.session_state["filtro_bioma"] = "Todos"
+                st.session_state["filtro_categoria"] = "Todas"
                 st.rerun()
 
         # 📌 Aplicação de Filtros no Menu Lateral
@@ -88,6 +94,9 @@ else:
                 st.cache_data.clear()
                 st.success("Cache limpo com sucesso!")
                 st.rerun()
+
+            # ✅ Toggle para ativar/desativar a exibição de "Itens Omissos na Soma"
+            exibir_itens_omissos = st.checkbox("🔎 Exibir Itens Omissos na Soma", value=False)
 
         # 📊 Estatísticas Dinâmicas dentro de Expanders
         with st.expander("📊 Estatísticas Gerais", expanded=True):
@@ -143,65 +152,21 @@ else:
             }).apply(lambda x: ['background-color: #D3D3D3 ; color: #000000' if x.name == len(df_total) - 1 else '' for _ in x], axis=1), itens_omissos
 
 
-        # 📌 Estatísticas por Demandante
-        with st.expander("📌 Estatísticas por Demandante"):
-            df_demandante, itens_fora_demandante = destacar_totais(df, "DEMANDANTE")
-            st.dataframe(df_demandante, use_container_width=True)
+        # 📊 Estatísticas Agregadas
+        for nome, coluna in [
+            ("📌 Estatísticas por Demandante", "DEMANDANTE"),
+            ("📌 Estatísticas por Iniciativa", "Nome da Proposta/Iniciativa Estruturante"),
+            ("🏞 Estatísticas por Unidade de Conservação", "Unidade de Conservação"),
+            ("🏢 Estatísticas por Gerência Regional", "GR"),
+            ("🌱 Estatísticas por Bioma", "BIOMA"),
+            ("🏷 Estatísticas por Categoria UC", "CATEGORIA UC"),
+            ("📍 Estatísticas por UF", "UF"),
+        ]:
+            with st.expander(nome):
+                df_agregado, itens_fora = destacar_totais(df, coluna)
+                st.dataframe(df_agregado, use_container_width=True)
 
-        # if not itens_fora_demandante.empty:
-        #     st.subheader("🔎 Itens Omissos na Soma - Demandante")
-        #     st.dataframe(itens_fora_demandante, use_container_width=True)
-
-        # 📊 Estatísticas por Iniciativa
-        with st.expander("📌 Estatísticas por Iniciativa"):
-            df_iniciativa, itens_fora_iniciativa = destacar_totais(df, "Nome da Proposta/Iniciativa Estruturante")
-            st.dataframe(df_iniciativa, use_container_width=True)
-
-        # if not itens_fora_iniciativa.empty:
-        #     st.subheader("🔎 Itens Omissos na Soma - Iniciativa")
-        #     st.dataframe(itens_fora_iniciativa, use_container_width=True)
-
-        # 📊 Estatísticas por Unidade de Conservação
-        with st.expander("🏞 Estatísticas por Unidade de Conservação"):
-            df_uc, itens_fora_uc = destacar_totais(df, "Unidade de Conservação")
-            st.dataframe(df_uc, use_container_width=True)
-
-        # if not itens_fora_uc.empty:
-        #     st.subheader("🔎 Itens Omissos na Soma - Unidade de Conservação")
-        #     st.dataframe(itens_fora_uc, use_container_width=True)
-
-        # 📊 Estatísticas por Gerência Regional
-        with st.expander("🏢 Estatísticas por Gerência Regional"):
-            df_gr, itens_fora_gr = destacar_totais(df, "GR")
-            st.dataframe(df_gr, use_container_width=True)
-
-        # if not itens_fora_gr.empty:
-        #     st.subheader("🔎 Itens Omissos na Soma - Gerência Regional")
-        #     st.dataframe(itens_fora_gr, use_container_width=True)
-
-        # 📊 Estatísticas por Bioma
-        with st.expander("🌱 Estatísticas por Bioma"):
-            df_bioma, itens_fora_bioma = destacar_totais(df, "BIOMA")
-            st.dataframe(df_bioma, use_container_width=True)
-
-        # if not itens_fora_bioma.empty:
-        #     st.subheader("🔎 Itens Omissos na Soma - Bioma")
-        #     st.dataframe(itens_fora_bioma, use_container_width=True)
-
-        # 📊 Estatísticas por Categoria UC
-        with st.expander("🏷 Estatísticas por Categoria UC"):
-            df_categoria, itens_fora_categoria = destacar_totais(df, "CATEGORIA UC")
-            st.dataframe(df_categoria, use_container_width=True)
-
-        # if not itens_fora_categoria.empty:
-        #     st.subheader("🔎 Itens Omissos na Soma - Categoria UC")
-        #     st.dataframe(itens_fora_categoria, use_container_width=True)
-
-        # 📊 Estatísticas por UF
-        with st.expander("📍 Estatísticas por UF"):
-            df_uf, itens_fora_uf = destacar_totais(df, "UF")
-            st.dataframe(df_uf, use_container_width=True)
-
-        # if not itens_fora_uf.empty:
-        #     st.subheader("🔎 Itens Omissos na Soma - UF")
-        #     st.dataframe(itens_fora_uf, use_container_width=True)
+                # ✅ Exibir Itens Omissos somente se o toggle estiver ativado
+                if exibir_itens_omissos and not itens_fora.empty:
+                    st.subheader(f"🔎 Itens Omissos na Soma - {coluna}")
+                    st.dataframe(itens_fora, use_container_width=True)
