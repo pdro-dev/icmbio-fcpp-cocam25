@@ -7,7 +7,7 @@ from init_db import init_database
 
 db_path = "database/app_data.db"
 
-st.title("Consulta de Iniciativas Registradas")
+st.subheader("Informações sobre as Iniciativas Estruturantes")
 
 @st.cache_data
 def load_data_from_db():
@@ -51,6 +51,7 @@ else:
                 st.session_state["filtro_uf"] = "Todas"
                 st.session_state["filtro_bioma"] = "Todos"
                 st.session_state["filtro_categoria"] = "Todas"
+                st.session_state["iniciativa_selecionada"] = "Selecione uma opção..."
                 st.rerun()
 
         # 📌 Aplicação de Filtros no Menu Lateral
@@ -176,11 +177,17 @@ else:
         st.divider()
         
         # 📌 Seção de visualização detalhada da iniciativa selecionada
-        st.subheader("📋 Relatório Executivo da Iniciativa")
+        st.subheader("📋 Resumo Executivo da Iniciativa")
 
         iniciativa_selecionada = st.selectbox(
-            "Selecione uma iniciativa:", df["Nome da Proposta/Iniciativa Estruturante"].unique()
+            "Selecione uma iniciativa:", 
+            ["Selecione uma opção..."] + df["Nome da Proposta/Iniciativa Estruturante"].dropna().unique().tolist()
         )
+
+        # Filtra apenas se uma iniciativa for selecionada
+        if iniciativa_selecionada != "Selecione uma opção...":
+            df_iniciativa = df[df["Nome da Proposta/Iniciativa Estruturante"] == iniciativa_selecionada]
+
 
         df_iniciativa = df[df["Nome da Proposta/Iniciativa Estruturante"] == iniciativa_selecionada]
 
@@ -217,25 +224,48 @@ else:
                 st.metric(label="🏗 Valor Total da Iniciativa", value=f"R$ {valor_total_iniciativa:,.2f}")
                 st.divider()
 
+                # 📌 Tabela de Estatísticas dentro da mesma coluna
+                st.markdown("##### 📊 Estatísticas da Iniciativa")
+                uc_list = sorted(df_iniciativa["Unidade de Conservação"].unique())
+
+                estatisticas = pd.DataFrame({
+                    "Indicador": ["Gerências Regionais", "Unidades de Conservação", "Biomas", "UFs"],
+                    "Quantidade": [len(gr_list), len(uc_list), len(bioma_list), len(uf_list)]
+                })
+
+                # Aplicando um estilo mais compacto
+                st.dataframe(
+                    estatisticas.style.set_properties(**{
+                        "border": "1px solid #444",
+                        "font-size": "10px"
+                    }),
+                    hide_index=True,
+                    use_container_width=True
+                )
+
+
             # 📌 Tabelas de Unidades de Conservação
-            st.markdown("### 🌍 Unidades de Conservação e Valores")
+            st.markdown("#### 🌍 Unidades de Conservação e Valores")
 
             unidades_alocadas = unidades[unidades["VALOR TOTAL ALOCADO"] > 0]
             unidades_iniciativa = unidades[unidades["Valor Total da Iniciativa"] > 0]
 
-            st.markdown("#### 💰 Valores Alocados")
-            st.dataframe(
-                unidades_alocadas.rename(columns={"VALOR TOTAL ALOCADO": "Valor Alocado (R$)"}),
-                hide_index=True,
-                use_container_width=True
-            )
+            # 📌 Expander para "Valores Alocados"
+            with st.expander("💰 Valores Alocados", expanded=False):
+                st.dataframe(
+                    unidades_alocadas.rename(columns={"VALOR TOTAL ALOCADO": "Valor Alocado (R$)"}),
+                    hide_index=True,
+                    use_container_width=True
+                )
 
-            st.markdown("#### 🏗 Valores da Iniciativa")
-            st.dataframe(
-                unidades_iniciativa.rename(columns={"Valor Total da Iniciativa": "Valor da Iniciativa (R$)"}),
-                hide_index=True,
-                use_container_width=True
-            )
+            # 📌 Expander para "Valores da Iniciativa"
+            with st.expander("💰 Valores da Iniciativa", expanded=False):
+                st.dataframe(
+                    unidades_iniciativa.rename(columns={"Valor Total da Iniciativa": "Valor da Iniciativa (R$)"}),
+                    hide_index=True,
+                    use_container_width=True
+                )
+
 
         # 📌 CSS para as tags minimalistas
         st.markdown("""
