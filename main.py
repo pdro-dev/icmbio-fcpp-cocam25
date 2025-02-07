@@ -12,9 +12,12 @@ if not os.path.exists(db_path):
     init_database()
 
 
-    
+
 
 st.set_page_config(page_title="Gestão de Recursos", layout="wide")
+
+
+
 
 st.markdown(
     """
