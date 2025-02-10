@@ -11,9 +11,9 @@ st.subheader("Informações sobre as Iniciativas Estruturantes")
 
 @st.cache_data
 def load_data_from_db():
-    """Carrega os dados da tabela 'cadastros_iniciais' do SQLite."""
+    """Carrega os dados da tabela 'td_dados_base_iniciativas' do SQLite."""
     conn = sqlite3.connect(db_path)
-    df = pd.read_sql_query("SELECT * FROM cadastros_iniciais", conn)
+    df = pd.read_sql_query("SELECT * FROM td_dados_base_iniciativas", conn)
     conn.close()
     return df
 
@@ -171,6 +171,9 @@ else:
                 if exibir_itens_omissos and not itens_fora.empty:
                     st.subheader(f"🔎 Itens Omissos na Soma - {coluna}")
                     st.dataframe(itens_fora, use_container_width=True)
+
+
+#################################################################################################
 
 
         # 📌 Seção de visualização detalhada da iniciativa selecionada
