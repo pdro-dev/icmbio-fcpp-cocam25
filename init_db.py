@@ -15,6 +15,26 @@ def init_database():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
+
+    # 📌 Criar tabela de usuários
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tf_usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cpf TEXT UNIQUE NOT NULL,
+            nome_completo TEXT NOT NULL,
+            email TEXT NOT NULL,
+            setor_demandante TEXT NOT NULL,
+            perfil TEXT NOT NULL DEFAULT 'comum' -- Pode ser 'comum' ou 'admin'
+        )
+    """)
+
+    # 📌 Criando um usuário "admin master" caso não exista
+    cursor.execute("""
+        INSERT OR IGNORE INTO tf_usuarios (cpf, nome_completo, email, setor_demandante, perfil)
+        VALUES ('00000000000', 'Admin Master', 'admin@example.com', 'TODOS', 'admin')
+    """)
+
+
     # 📌 Carregando dados do JSON (dados base fixos)
     df_base = pd.read_json(json_path)
 

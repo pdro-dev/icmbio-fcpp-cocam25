@@ -6,7 +6,21 @@ import numpy as np
 
 from init_db import init_database
 
+
 db_path = "database/app_data.db"
+
+# 📌 Verifica se o usuário está logado antes de permitir acesso à página
+if "usuario_logado" not in st.session_state or not st.session_state["usuario_logado"]:
+    st.warning("🔒 Acesso negado! Faça login na página principal para acessar esta seção.")
+    st.stop()
+
+st.set_page_config(
+    page_title="Consultar Registros",
+    page_icon="♾️",
+    layout="wide"
+    )
+
+
 
 st.subheader("Informações sobre as Iniciativas Estruturantes")
 
@@ -23,6 +37,15 @@ if not os.path.exists(db_path):
     st.warning("Banco de dados não encontrado. Verifique se executou o init_db.py.")
 else:
     df = load_data_from_db()  # ⬅️ Agora `df` é carregado antes dos filtros
+
+    if st.session_state["perfil"] == "admin":
+        df_filtrado = df  # Admin vê todos os registros
+        df = df_filtrado
+    else:
+        df_filtrado = df[df["DEMANDANTE"] == st.session_state["setor"]]
+        df = df_filtrado
+
+
 
     if df.empty:
         st.warning("Nenhum dado encontrado no banco de dados.")
