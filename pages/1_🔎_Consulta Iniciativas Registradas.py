@@ -103,25 +103,34 @@ else:
         if filtro_categoria != "Todas":
             df = df[df["CATEGORIA UC"] == filtro_categoria]
 
-        # 📌 Expander de Configurações (agora no final)
-        with st.sidebar.expander("⚙️ Configurações", expanded=False):
-            if st.button("🔄 Recriar Banco de Dados"):
-                if os.path.exists(db_path):
-                    os.remove(db_path)
-                try:
-                    init_database()
-                    st.success("Banco de dados recriado com sucesso!")
+        filtro_acao = st.sidebar.selectbox("🎯 Ação de Aplicação", ["Todas"] + sorted(df["AÇÃO DE APLICAÇÃO"].dropna().unique().tolist()), key="filtro_acao")
+        if filtro_acao != "Todas":
+            df = df[df["AÇÃO DE APLICAÇÃO"] == filtro_acao]
+
+
+        # 📌 Verifica se o usuário logado tem permissão para visualizar as configurações
+        if st.session_state.get("usuario_logado") and st.session_state.get("perfil") == "admin":
+            # 📌 Expander de Configurações (agora no final)
+            with st.sidebar.expander("⚙️ Configurações", expanded=False):
+                if st.button("🔄 Recriar Banco de Dados"):
+                    if os.path.exists(db_path):
+                        os.remove(db_path)
+                    try:
+                        init_database()
+                        st.success("Banco de dados recriado com sucesso!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao recriar o banco: {e}")
+
+                if st.button("🗑 Limpar Cache"):
+                    st.cache_data.clear()
+                    st.success("Cache limpo com sucesso!")
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao recriar o banco: {e}")
 
-            if st.button("🗑 Limpar Cache"):
-                st.cache_data.clear()
-                st.success("Cache limpo com sucesso!")
-                st.rerun()
+                # # ✅ Toggle para ativar/desativar a exibição de "Itens Omissos na Soma"
+                # exibir_itens_omissos = st.checkbox("🔎 Exibir Itens Omissos na Soma", value=False)
 
-            # ✅ Toggle para ativar/desativar a exibição de "Itens Omissos na Soma"
-            exibir_itens_omissos = st.checkbox("🔎 Exibir Itens Omissos na Soma", value=False)
+        exibir_itens_omissos = False
 
         # 📊 Estatísticas Dinâmicas dentro de Expanders
         with st.expander("📊 Estatísticas Gerais", expanded=True):
@@ -216,6 +225,7 @@ else:
             ("🌱   por Bioma", "BIOMA"),
             ("🏷   por Categoria UC", "CATEGORIA UC"),
             ("📍   por UF", "UF"),
+            ("🎯   por Ação de Aplicação","AÇÃO DE APLICAÇÃO"),
         ]:
             with st.expander(nome):
                 df_agregado, itens_fora = destacar_totais(df, coluna)
@@ -263,7 +273,7 @@ else:
             col1, col2 = st.columns(2)
 
             with col1:
-                st.markdown("#### 📌 Informações Gerais")
+                st.markdown("#### Informações Gerais")
                 st.markdown(f"**📌 Demandante:** {demandante}")
 
                 # 📌 Exibição dos números SEI
@@ -301,6 +311,12 @@ else:
                 else:
                     st.progress(percentual_valor_alocado / 100)  # Mantém o valor correto para ≤100%
 
+                # 📌 Exibição das Ações de Aplicação
+                acoes_list = sorted(df_iniciativa["AÇÃO DE APLICAÇÃO"].dropna().astype(str).unique())
+                if acoes_list:
+                    st.markdown("**🎯 Ações de Aplicação:**", unsafe_allow_html=True)
+                    st.markdown(" ".join([f"<span class='tag'>{acao}</span>" for acao in acoes_list]), unsafe_allow_html=True)
+
 
                 st.divider()
 
@@ -309,8 +325,8 @@ else:
                 uc_list = sorted(df_iniciativa["Unidade de Conservação"].unique())
 
                 estatisticas = pd.DataFrame({
-                    "Indicador": ["Gerências Regionais", "Unidades de Conservação", "Biomas", "UFs"],
-                    "Quantidade": [len(gr_list), len(uc_list), len(bioma_list), len(uf_list)]
+                    "Indicador": ["Gerências Regionais", "Unidades de Conservação", "Biomas", "UFs", "Ações de Aplicação"],
+                    "Quantidade": [len(gr_list), len(uc_list), len(bioma_list), len(uf_list), len(acoes_list)]
                 })
 
                 # Aplicando um estilo mais compacto

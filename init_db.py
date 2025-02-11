@@ -31,7 +31,7 @@ def init_database():
     # 📌 Criando um usuário "admin master" caso não exista
     cursor.execute("""
         INSERT OR IGNORE INTO tf_usuarios (cpf, nome_completo, email, setor_demandante, perfil)
-        VALUES ('00000000000', 'Admin', 'admin@example.com', 'TODOS', 'admin')
+        VALUES ({ADMIN_CPF},{ADMIN_NOME},{ADMIN_EMAIL},{ADMIN_SETOR},{ADMIN_PERFIL})
     """)
 
 
