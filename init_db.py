@@ -3,12 +3,21 @@ import numpy as np
 import pandas as pd
 import sqlite3
 import os
+import streamlit as st
+
 
 def init_database():
     # 📌 Caminhos dos arquivos de dados e do banco
     json_path = "dados/base_iniciativas_consolidada.json"
     excel_path = "dados/base_iniciativas_resumos_sei.xlsx"
     db_path = "database/app_data.db"
+
+    admin_cpf = st.secrets["ADMIN_CPF"]
+    admin_nome = st.secrets["ADMIN_NOME"]
+    admin_email = st.secrets["ADMIN_EMAIL"]
+    admin_setor = st.secrets["ADMIN_SETOR"]
+    admin_perfil = st.secrets["ADMIN_PERFIL"]
+
 
     # 📌 Criando diretório do banco de dados se não existir
     os.makedirs("database", exist_ok=True)
@@ -31,8 +40,9 @@ def init_database():
     # 📌 Criando um usuário "admin master" caso não exista
     cursor.execute("""
         INSERT OR IGNORE INTO tf_usuarios (cpf, nome_completo, email, setor_demandante, perfil)
-        VALUES ({ADMIN_CPF},{ADMIN_NOME},{ADMIN_EMAIL},{ADMIN_SETOR},{ADMIN_PERFIL})
-    """)
+        VALUES (?, ?, ?, ?, ?)
+    """, (admin_cpf, admin_nome, admin_email, admin_setor, admin_perfil))
+
 
 
     # 📌 Carregando dados do JSON (dados base fixos)
@@ -138,6 +148,18 @@ def init_database():
         )
     """)
 
+    # 📌 Criando a tabela `tf_cadastro_regras_negocio`
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tf_cadastro_regras_negocio (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_iniciativa INTEGER NOT NULL,
+            objetivo_geral TEXT,
+            objetivo_especifico TEXT,  -- JSON com múltiplos objetivos específicos
+            eixos_tematicos TEXT,       -- JSON com múltiplos eixos temáticos
+            FOREIGN KEY (id_iniciativa) REFERENCES td_iniciativas(id_iniciativa)
+        )
+    """)
+
     conn.commit()
 
     # 📌 Inserindo valores únicos nas tabelas dimensão
@@ -179,5 +201,105 @@ def init_database():
     conn.close()
     print("✅ Banco de dados inicializado com sucesso!")
 
+
+def init_samge_database():
+    # Caminho do arquivo Excel com os dados do SAMGe
+    excel_path = "dados/matrizConceitual_linguagemSAMGe.xlsx"
+    db_path = "database/app_data.db"
+
+    """Cria as tabelas do SAMGe no banco de dados e popula com os dados do Excel."""
+    if not os.path.exists(excel_path):
+        print("❌ Arquivo do SAMGe não encontrado!")
+        return
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    # 📌 Criando tabela de Macroprocessos
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS td_samge_macroprocessos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_m TEXT UNIQUE NOT NULL,
+            nome TEXT NOT NULL,
+            descricao TEXT
+        )
+    """)
+
+    # 📌 Criando tabela de Processos
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS td_samge_processos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_p TEXT UNIQUE NOT NULL,
+            macroprocesso_id TEXT NOT NULL,
+            nome TEXT NOT NULL,
+            descricao TEXT,
+            explicacao TEXT,
+            FOREIGN KEY (macroprocesso_id) REFERENCES td_samge_macroprocessos(id_m)
+        )
+    """)
+
+    # 📌 Criando tabela de Ações de Manejo
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS td_samge_acoes_manejo (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_ac TEXT UNIQUE NOT NULL,
+            processo_id TEXT NOT NULL,
+            nome TEXT NOT NULL,
+            descricao TEXT,
+            explicacao TEXT,
+            entrega TEXT,
+            FOREIGN KEY (processo_id) REFERENCES td_samge_processos(id_p)
+        )
+    """)
+
+    # 📌 Criando tabela de Atividades
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS td_samge_atividades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_at TEXT UNIQUE NOT NULL,
+            acao_manejo_id TEXT NOT NULL,
+            nome TEXT NOT NULL,
+            descricao TEXT,
+            explicacao TEXT,
+            subentrega TEXT,
+            FOREIGN KEY (acao_manejo_id) REFERENCES td_samge_acoes_manejo(id_ac)
+        )
+    """)
+
+    conn.commit()
+
+    # 📌 Lendo o arquivo Excel
+    df = pd.read_excel(excel_path, engine="openpyxl")
+
+    # 🔹 Padronizando os nomes das colunas
+    df.columns = df.columns.str.strip()
+
+    # 📌 Inserindo Macroprocessos
+    macroprocessos = df[["ID-M", "Macroprocesso"]].drop_duplicates()
+    macroprocessos.columns = ["id_m", "nome"]
+    macroprocessos["descricao"] = None  # 🔥 Não temos descrição no arquivo, adicionamos como NULL
+    macroprocessos.to_sql("td_samge_macroprocessos", conn, if_exists="replace", index=False)
+
+    # 📌 Inserindo Processos
+    processos = df[["ID-P", "Processo", "Descrição do Processo", "Explicação do Processo", "ID-M"]].drop_duplicates()
+    processos.columns = ["id_p", "nome", "descricao", "explicacao", "macroprocesso_id"]
+    processos.to_sql("td_samge_processos", conn, if_exists="replace", index=False)
+
+    # 📌 Inserindo Ações de Manejo
+    acoes_manejo = df[["ID-AC", "Ação de Manejo", "Descrição da Ação de Manejo", "Explicação da Ação de Manejo", "Entrega", "ID-P"]].drop_duplicates()
+    acoes_manejo.columns = ["id_ac", "nome", "descricao", "explicacao", "entrega", "processo_id"]
+    acoes_manejo.to_sql("td_samge_acoes_manejo", conn, if_exists="replace", index=False)
+
+    # 📌 Inserindo Atividades
+    atividades = df[["ID-AT", "Atividade", "Descrição da Atividade", "Explicação da Atividade", "Subentrega", "ID-AC"]].drop_duplicates()
+    atividades.columns = ["id_at", "nome", "descricao", "explicacao", "subentrega", "acao_manejo_id"]
+    atividades.to_sql("td_samge_atividades", conn, if_exists="replace", index=False)
+
+    conn.close()
+    print("✅ Banco de dados SAMGe atualizado com sucesso!")
+
+
+
 if __name__ == "__main__":
     init_database()
+    init_samge_database()
