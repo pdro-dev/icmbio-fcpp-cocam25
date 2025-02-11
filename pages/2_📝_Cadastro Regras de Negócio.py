@@ -63,8 +63,14 @@ def salvar_dados_iniciativa(id_iniciativa, objetivo_geral, objetivos_especificos
     conn.close()
 
 
+# 📌 Inicializa variáveis no session_state se ainda não existirem
+if "edit_objetivo" not in st.session_state:
+    st.session_state["edit_objetivo"] = None
+
 # 📌 Seleção da Iniciativa
 st.title("📝 Cadastro de Regras de Negócio")
+
+st.divider()
 
 perfil = st.session_state["perfil"]
 setor = st.session_state["setor"]
@@ -85,6 +91,8 @@ id_iniciativa = st.selectbox(
 # 📌 Carregar dados da iniciativa
 dados_iniciativa = carregar_dados_iniciativa(id_iniciativa)
 
+
+
 # 📌 Campos de entrada
 st.subheader("🎯 Objetivo Geral")
 objetivo_geral = st.text_area(
@@ -100,6 +108,27 @@ st.subheader("🎯 Objetivos Específicos")
 # 📌 Inicializa a variável na sessão se ainda não existir
 if "objetivos_especificos" not in st.session_state:
     st.session_state["objetivos_especificos"] = json.loads(dados_iniciativa["objetivo_especifico"]) if dados_iniciativa else []
+
+
+# 📌 Função para abrir o **dialog modal**
+@st.dialog("📝 Editar Objetivo Específico", width="large")
+def editar_objetivo_especifico(index):
+    """Abre o modal de edição de um objetivo específico"""
+    novo_texto = st.text_area("Edite o objetivo específico:", value=st.session_state["objetivos_especificos"][index], height=70)
+    
+    col1, col2 = st.columns(2)
+    salvar = col1.button("💾 Salvar Alteração")
+    cancelar = col2.button("❌ Cancelar")
+
+    if salvar:
+        st.session_state["objetivos_especificos"][index] = novo_texto
+        st.session_state["edit_objetivo"] = None  # Define como None para evitar erro
+        st.rerun()
+
+    if cancelar:
+        st.session_state["edit_objetivo"] = None  # Define como None para evitar erro
+        st.rerun()
+
 
 # 📌 Campo para adicionar novos objetivos específicos
 novo_objetivo = st.text_area("Novo Objetivo Específico", height=70, placeholder="Digite um novo objetivo específico aqui...")
@@ -127,26 +156,10 @@ for i, objetivo in enumerate(st.session_state["objetivos_especificos"]):
         **📦 Insumos Relacionados:** {num_insumos}  
         """)
 
-        # Botão para abrir um diálogo de edição
+        # Botão para abrir um **diálogo modal**
         if col2.button("✏️ Editar", key=f"edit-{i}"):
             st.session_state["edit_objetivo"] = i
-            st.rerun()
-
-# 📌 Modal para edição do objetivo específico
-if "edit_objetivo" in st.session_state:
-    index = st.session_state["edit_objetivo"]
-    with st.popover(f"📝 Editar Objetivo {index+1}"):
-        novo_texto = st.text_area("Edite o objetivo específico:", value=st.session_state["objetivos_especificos"][index], height=70)
-        
-        # Salvando alteração
-        if st.button("💾 Salvar Alteração"):
-            st.session_state["objetivos_especificos"][index] = novo_texto
-            del st.session_state["edit_objetivo"]
-            st.rerun()
-
-        if st.button("❌ Cancelar"):
-            del st.session_state["edit_objetivo"]
-            st.rerun()
+            editar_objetivo_especifico(i)
 
 st.divider()
 
