@@ -87,6 +87,10 @@ else:
         if filtro_uc != "Todas":
             df = df[df["Unidade de Conservação"] == filtro_uc]
 
+        filtro_acao = st.sidebar.selectbox("🎯 Ação de Aplicação", ["Todas"] + sorted(df["AÇÃO DE APLICAÇÃO"].dropna().unique().tolist()), key="filtro_acao")
+        if filtro_acao != "Todas":
+            df = df[df["AÇÃO DE APLICAÇÃO"] == filtro_acao]
+
         filtro_gr = st.sidebar.selectbox("🏢 Gerência Regional", ["Todos"] + sorted(df["GR"].dropna().unique().tolist()), key="filtro_gr")
         if filtro_gr != "Todos":
             df = df[df["GR"] == filtro_gr]
@@ -103,9 +107,7 @@ else:
         if filtro_categoria != "Todas":
             df = df[df["CATEGORIA UC"] == filtro_categoria]
 
-        filtro_acao = st.sidebar.selectbox("🎯 Ação de Aplicação", ["Todas"] + sorted(df["AÇÃO DE APLICAÇÃO"].dropna().unique().tolist()), key="filtro_acao")
-        if filtro_acao != "Todas":
-            df = df[df["AÇÃO DE APLICAÇÃO"] == filtro_acao]
+        
 
 
         # 📌 Verifica se o usuário logado tem permissão para visualizar as configurações
@@ -180,19 +182,27 @@ else:
                 "Unidade de Conservação": "Total de UCs"
             }).reset_index()
 
-            # 🔥 Adicionando a coluna de % Valor Alocado
-            df_total["% Valor Alocado"] = (df_total["VALOR TOTAL ALOCADO"] / df_total["Valor Total da Iniciativa"]) * 100
-            df_total["% Valor Alocado"] = df_total["% Valor Alocado"].fillna(0).round(2)
+            # 📌 Evitar divisão por zero ao calcular a % de Valor Alocado
+            df_total["% Valor Alocado"] = np.where(
+                df_total["Valor Total da Iniciativa"] > 0,
+                (df_total["VALOR TOTAL ALOCADO"] / df_total["Valor Total da Iniciativa"]) * 100,
+                0  # Se "Valor Total da Iniciativa" for 0, define como 0%
+            )
 
-            # 🔥 Criando barra de progresso usando emojis para ilustrar visualmente o progresso
+            # 🔥 Garante que os valores sejam numéricos e sem infinitos
+            df_total["% Valor Alocado"] = df_total["% Valor Alocado"].replace([np.inf, -np.inf], 0).fillna(0).round(2)
+
+            # 📌 Criando a barra de progresso com valores limitados entre 0 e 100
             def gerar_barra_progresso(perc):
-                total_blocos = 10
-                preenchidos = min(int((perc / 100) * total_blocos), total_blocos)
+                total_blocos = 10  # Define a quantidade de blocos para a barra
+                preenchidos = max(0, min(int((perc / 100) * total_blocos), total_blocos))  # Evita valores inválidos
+
                 if perc > 100:
                     return "🟧" * preenchidos + "⬜" * (total_blocos - preenchidos)  # 🔥 Excesso em laranja
                 return "🟩" * preenchidos + "⬜" * (total_blocos - preenchidos)  # 🔥 Normal em verde
-            
+
             df_total["Progresso"] = df_total["% Valor Alocado"].apply(gerar_barra_progresso)
+
 
             total_geral = pd.DataFrame({
                 coluna_grupo: ["Total Geral"],
@@ -220,12 +230,13 @@ else:
         for nome, coluna in [
             ("📌   por Demandante", "DEMANDANTE"),
             ("📌   por Iniciativa", "Nome da Proposta/Iniciativa Estruturante"),
+            ("🎯   por Ação de Aplicação","AÇÃO DE APLICAÇÃO"),
             ("🏞   por Unidade de Conservação", "Unidade de Conservação"),
             ("🏢   por Gerência Regional", "GR"),
             ("🌱   por Bioma", "BIOMA"),
             ("🏷   por Categoria UC", "CATEGORIA UC"),
             ("📍   por UF", "UF"),
-            ("🎯   por Ação de Aplicação","AÇÃO DE APLICAÇÃO"),
+            
         ]:
             with st.expander(nome):
                 df_agregado, itens_fora = destacar_totais(df, coluna)
