@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import os
+import numpy as np
 
 from init_db import init_database
 
@@ -101,11 +102,26 @@ else:
 
         # 📊 Estatísticas Dinâmicas dentro de Expanders
         with st.expander("📊 Estatísticas Gerais", expanded=True):
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("📌 Total de Iniciativas", df["Nome da Proposta/Iniciativa Estruturante"].nunique())
-            col2.metric("🏞 Total de UCs", df["Unidade de Conservação"].nunique())
-            col3.metric("💰 Valor Alocado", f"R$ {df['VALOR TOTAL ALOCADO'].astype(float).sum():,.2f}")
-            col4.metric("💰 Valor Total da Iniciativa", f"R$ {df['Valor Total da Iniciativa'].astype(float).sum():,.2f}")
+            col1, col2, col3, col4, col5 = st.columns(5)  # Adicionamos uma 5ª coluna para o saldo
+            
+            total_iniciativas = df["Nome da Proposta/Iniciativa Estruturante"].nunique()
+            total_ucs = df["Unidade de Conservação"].nunique()
+            valor_alocado = df["VALOR TOTAL ALOCADO"].astype(float).sum()
+            valor_total_iniciativa = df["Valor Total da Iniciativa"].astype(float).sum()
+            saldo_total = df["SALDO"].astype(float).sum()  # Adicionamos o saldo total
+
+            # 📌 Cálculo da % de valor alocado em relação ao total da iniciativa
+            percentual_alocado = (valor_alocado / valor_total_iniciativa) * 100 if valor_total_iniciativa > 0 else 0
+
+            col1.metric("📌 Total de Iniciativas", total_iniciativas)
+            col2.metric("🏞 Total de UCs", total_ucs)
+            col3.metric("💰 Valor Alocado", f"R$ {valor_alocado:,.2f}")
+            col4.metric("💰 Valor Total da Iniciativa", f"R$ {valor_total_iniciativa:,.2f}")
+            col5.metric("💰 Saldo", f"R$ {saldo_total:,.2f}")  # Mostra o saldo total
+
+            # 📌 Exibição da % e da Progress Bar
+            col4.markdown(f"💹 % Alocado: {percentual_alocado:.2f}%")
+            col3.progress(min(percentual_alocado / 100, 1.0))  # 🔥 Garante que a progress bar não ultrapasse 100%
 
             st.markdown(
                 """
@@ -125,43 +141,58 @@ else:
                 "Nome da Proposta/Iniciativa Estruturante": "nunique",
                 "Unidade de Conservação": "nunique",
                 "VALOR TOTAL ALOCADO": lambda x: x.astype(float).sum(),
-                "Valor Total da Iniciativa": lambda x: x.astype(float).sum()
+                "Valor Total da Iniciativa": lambda x: x.astype(float).sum(),
+                "SALDO": lambda x: x.astype(float).sum()  # Adicionamos o saldo na agregação
             }).rename(columns={
                 "Nome da Proposta/Iniciativa Estruturante": "Total de Iniciativas",
                 "Unidade de Conservação": "Total de UCs"
             }).reset_index()
+
+            # 🔥 Adicionando a coluna de % Valor Alocado
+            df_total["% Valor Alocado"] = (df_total["VALOR TOTAL ALOCADO"] / df_total["Valor Total da Iniciativa"]) * 100
+            df_total["% Valor Alocado"] = df_total["% Valor Alocado"].fillna(0).round(2)
+
+            # 🔥 Criando barra de progresso usando emojis para ilustrar visualmente o progresso
+            def gerar_barra_progresso(perc):
+                total_blocos = 10
+                preenchidos = min(int((perc / 100) * total_blocos), total_blocos)
+                if perc > 100:
+                    return "🟧" * preenchidos + "⬜" * (total_blocos - preenchidos)  # 🔥 Excesso em laranja
+                return "🟩" * preenchidos + "⬜" * (total_blocos - preenchidos)  # 🔥 Normal em verde
+            
+            df_total["Progresso"] = df_total["% Valor Alocado"].apply(gerar_barra_progresso)
 
             total_geral = pd.DataFrame({
                 coluna_grupo: ["Total Geral"],
                 "Total de Iniciativas": [df_total["Total de Iniciativas"].sum()],
                 "Total de UCs": [df_total["Total de UCs"].sum()],
                 "VALOR TOTAL ALOCADO": [df_total["VALOR TOTAL ALOCADO"].sum()],
-                "Valor Total da Iniciativa": [df_total["Valor Total da Iniciativa"].sum()]
+                "Valor Total da Iniciativa": [df_total["Valor Total da Iniciativa"].sum()],
+                "SALDO": [df_total["SALDO"].sum()],  # Adicionamos o saldo total geral
+                "% Valor Alocado": [(df_total["VALOR TOTAL ALOCADO"].sum() / df_total["Valor Total da Iniciativa"].sum()) * 100]
             })
-
+            
             df_total = pd.concat([df_total, total_geral], ignore_index=True)
 
             # 🔎 Identificando Registros que Estão Fora da Soma
-            soma_agregada = df_total[df_total[coluna_grupo] == "Total Geral"]["VALOR TOTAL ALOCADO"].values[0]
-            soma_total_real = df["VALOR TOTAL ALOCADO"].astype(float).sum()
-
             itens_omissos = df[df["VALOR TOTAL ALOCADO"].astype(float) + df["Valor Total da Iniciativa"].astype(float) == 0]
 
             return df_total.style.format({
                 "VALOR TOTAL ALOCADO": "R$ {:,.2f}",
-                "Valor Total da Iniciativa": "R$ {:,.2f}"
-            }).apply(lambda x: ['background-color: #D3D3D3 ; color: #000000' if x.name == len(df_total) - 1 else '' for _ in x], axis=1), itens_omissos
-
+                "Valor Total da Iniciativa": "R$ {:,.2f}",
+                "SALDO": "R$ {:,.2f}",
+                "% Valor Alocado": "{:.2f}%"
+            }).set_properties(subset=["Progresso"], **{"text-align": "center"}), itens_omissos
 
         # 📊 Estatísticas Agregadas
         for nome, coluna in [
-            ("📌 Estatísticas por Demandante", "DEMANDANTE"),
-            ("📌 Estatísticas por Iniciativa", "Nome da Proposta/Iniciativa Estruturante"),
-            ("🏞 Estatísticas por Unidade de Conservação", "Unidade de Conservação"),
-            ("🏢 Estatísticas por Gerência Regional", "GR"),
-            ("🌱 Estatísticas por Bioma", "BIOMA"),
-            ("🏷 Estatísticas por Categoria UC", "CATEGORIA UC"),
-            ("📍 Estatísticas por UF", "UF"),
+            ("📌   por Demandante", "DEMANDANTE"),
+            ("📌   por Iniciativa", "Nome da Proposta/Iniciativa Estruturante"),
+            ("🏞   por Unidade de Conservação", "Unidade de Conservação"),
+            ("🏢   por Gerência Regional", "GR"),
+            ("🌱   por Bioma", "BIOMA"),
+            ("🏷   por Categoria UC", "CATEGORIA UC"),
+            ("📍   por UF", "UF"),
         ]:
             with st.expander(nome):
                 df_agregado, itens_fora = destacar_totais(df, coluna)
@@ -171,6 +202,7 @@ else:
                 if exibir_itens_omissos and not itens_fora.empty:
                     st.subheader(f"🔎 Itens Omissos na Soma - {coluna}")
                     st.dataframe(itens_fora, use_container_width=True)
+
 
 
 #################################################################################################
@@ -196,9 +228,9 @@ else:
 
         if not df_iniciativa.empty:
             demandante = df_iniciativa["DEMANDANTE"].iloc[0]
-            gr_list = sorted(df_iniciativa["GR"].unique())
-            bioma_list = sorted(df_iniciativa["BIOMA"].unique())
-            uf_list = sorted(df_iniciativa["UF"].unique())
+            gr_list = sorted(df_iniciativa["GR"].dropna().astype(str).unique())
+            bioma_list = sorted(df_iniciativa["BIOMA"].dropna().astype(str).unique())
+            uf_list = sorted(df_iniciativa["UF"].dropna().astype(str).unique())
             valor_total_alocado = df_iniciativa["VALOR TOTAL ALOCADO"].sum()
             valor_total_iniciativa = df_iniciativa["Valor Total da Iniciativa"].sum()
 
@@ -210,6 +242,12 @@ else:
             with col1:
                 st.markdown("#### 📌 Informações Gerais")
                 st.markdown(f"**📌 Demandante:** {demandante}")
+
+                # 📌 Exibição dos números SEI
+                sei_list = df_iniciativa["Nº SEI"].dropna().astype(int).astype(str).unique().tolist()
+                if sei_list:
+                    st.markdown("**📜 Nº SEI:**", unsafe_allow_html=True)
+                    st.markdown(" ".join([f"<span class='tag'>{sei}</span>" for sei in sei_list]), unsafe_allow_html=True)
 
                 # 📌 Exibição compacta de listas com tags estilizadas
                 st.markdown("**📍 Gerências Regionais:**", unsafe_allow_html=True)
@@ -225,6 +263,22 @@ else:
                 st.markdown("#### 📊 Valores Financeiros")
                 st.metric(label="💰 Valor Total Alocado", value=f"R$ {valor_total_alocado:,.2f}")
                 st.metric(label="🏗 Valor Total da Iniciativa", value=f"R$ {valor_total_iniciativa:,.2f}")
+
+                # 📌 Cálculo do percentual do valor alocado
+                percentual_valor_alocado = (valor_total_alocado / valor_total_iniciativa) * 100 if valor_total_iniciativa > 0 else 0
+                percentual_valor_alocado = round(percentual_valor_alocado, 2)
+
+                # 📌 Exibir percentual formatado
+                st.markdown(f"**📊 Percentual de Valor Alocado: {percentual_valor_alocado}%**")
+
+                # 📌 Ajuste para progress bar:
+                if percentual_valor_alocado > 100:
+                    st.warning("❕ O valor alocado ultrapassa 100% do total da iniciativa!")
+                    st.progress(1.0)  # Mantém a barra cheia para valores acima de 100%
+                else:
+                    st.progress(percentual_valor_alocado / 100)  # Mantém o valor correto para ≤100%
+
+
                 st.divider()
 
                 # 📌 Tabela de Estatísticas dentro da mesma coluna
@@ -250,24 +304,80 @@ else:
             # 📌 Tabelas de Unidades de Conservação
             st.markdown("#### 🌍 Unidades de Conservação e Valores")
 
-            unidades_alocadas = unidades[unidades["VALOR TOTAL ALOCADO"] > 0]
-            unidades_iniciativa = unidades[unidades["Valor Total da Iniciativa"] > 0]
+            unidades_alocadas = unidades[unidades["VALOR TOTAL ALOCADO"] > 0].copy()
+            unidades_iniciativa = unidades[unidades["Valor Total da Iniciativa"] > 0].copy()
 
-            # 📌 Expander para "Valores Alocados"
+            # 📌 Cálculo do percentual de valor alocado (evitando divisão por zero e problemas de infinidade)
+            unidades_alocadas["% Valor Alocado"] = (unidades_alocadas["VALOR TOTAL ALOCADO"] / unidades_alocadas["Valor Total da Iniciativa"]) * 100
+            unidades_alocadas["% Valor Alocado"] = unidades_alocadas["% Valor Alocado"].replace([np.inf, -np.inf], 0).fillna(0).round(2)
+
+            # 📌 Criando uma barra de progresso visual diferenciada
+            def gerar_barra_progresso(perc):
+                total_blocos = 10  # Define a quantidade de blocos para a barra
+                preenchidos = max(0, min(int((perc / 100) * total_blocos), total_blocos))  # Garante que esteja dentro do limite
+
+                if perc > 100:
+                    return "🟧" * preenchidos + "⬜" * (total_blocos - preenchidos)  # 🔥 Excesso em laranja
+                return "🟩" * preenchidos + "⬜" * (total_blocos - preenchidos)  # 🔥 Normal em verde
+
+            # 📌 Aplicando a barra de progresso na tabela
+            unidades_alocadas["Progresso"] = unidades_alocadas["% Valor Alocado"].apply(gerar_barra_progresso)
+
+            # 📌 Criando a linha de total corretamente
+            linha_total = pd.DataFrame([{
+                "Unidade de Conservação": "TOTAL GERAL",
+                "VALOR TOTAL ALOCADO": unidades_alocadas["VALOR TOTAL ALOCADO"].sum(),
+                "Valor Total da Iniciativa": unidades_alocadas["Valor Total da Iniciativa"].sum(),
+                "% Valor Alocado": round((unidades_alocadas["VALOR TOTAL ALOCADO"].sum() / unidades_alocadas["Valor Total da Iniciativa"].sum()) * 100, 2)
+                    if unidades_alocadas["Valor Total da Iniciativa"].sum() > 0 else 0,
+                "Progresso": "⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛"
+            }])
+
+            # 📌 Concatenando a linha de total sem erro
+            unidades_alocadas = pd.concat([unidades_alocadas, linha_total], ignore_index=True)
+
+            # 📌 Exibir DataFrame formatado
             with st.expander("💰 Valores Alocados", expanded=False):
                 st.dataframe(
-                    unidades_alocadas.rename(columns={"VALOR TOTAL ALOCADO": "Valor Alocado (R$)"}),
+                    unidades_alocadas.rename(columns={
+                        "VALOR TOTAL ALOCADO": "Valor Alocado (R$)",
+                        "Valor Total da Iniciativa": "Valor da Iniciativa (R$)"
+                    }),
                     hide_index=True,
                     use_container_width=True
                 )
 
-            # 📌 Expander para "Valores da Iniciativa"
+            # 📌 Ajuste para "Valores da Iniciativa" (evitando erros de divisão)
+            unidades_iniciativa["% Valor Alocado"] = (unidades_iniciativa["VALOR TOTAL ALOCADO"] / unidades_iniciativa["Valor Total da Iniciativa"]) * 100
+            unidades_iniciativa["% Valor Alocado"] = unidades_iniciativa["% Valor Alocado"].replace([np.inf, -np.inf], 0).fillna(0).round(2)
+            unidades_iniciativa["Progresso"] = unidades_iniciativa["% Valor Alocado"].apply(gerar_barra_progresso)
+
+            # 📌 Criando a linha de total corretamente para "Valores da Iniciativa"
+            linha_total_iniciativa = pd.DataFrame([{
+                "Unidade de Conservação": "TOTAL GERAL",
+                "VALOR TOTAL ALOCADO": unidades_iniciativa["VALOR TOTAL ALOCADO"].sum(),
+                "Valor Total da Iniciativa": unidades_iniciativa["Valor Total da Iniciativa"].sum(),
+                "% Valor Alocado": round((unidades_iniciativa["VALOR TOTAL ALOCADO"].sum() / unidades_iniciativa["Valor Total da Iniciativa"].sum()) * 100, 2)
+                    if unidades_iniciativa["Valor Total da Iniciativa"].sum() > 0 else 0,
+                "Progresso": "⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛"
+            }])
+
+            # 📌 Concatenando a linha de total corretamente
+            unidades_iniciativa = pd.concat([unidades_iniciativa, linha_total_iniciativa], ignore_index=True)
+
             with st.expander("💰 Valores da Iniciativa", expanded=False):
                 st.dataframe(
-                    unidades_iniciativa.rename(columns={"Valor Total da Iniciativa": "Valor da Iniciativa (R$)"}),
+                    unidades_iniciativa.rename(columns={
+                        "VALOR TOTAL ALOCADO": "Valor Alocado (R$)",
+                        "Valor Total da Iniciativa": "Valor da Iniciativa (R$)"
+                    }),
                     hide_index=True,
                     use_container_width=True
                 )
+
+
+
+
 
 
         # 📌 CSS para as tags minimalistas
