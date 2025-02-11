@@ -1,4 +1,6 @@
 .streamlit/secrets.toml
+dados
+app_data.db
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

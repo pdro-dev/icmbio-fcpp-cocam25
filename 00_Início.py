@@ -142,7 +142,14 @@ if cpf_input:
 
             nome_completo = st.text_input("Nome Completo")
             email = st.text_input("E-mail Institucional")
-            setor_demandante = st.text_input("Setor Demandante")
+            
+            # Obtém a lista de setores demandantes
+            lista_setores = obter_setores_demandantes()
+
+            if lista_setores:
+                setor_demandante = st.selectbox("Setor Demandante", lista_setores)
+            else:
+                setor_demandante = st.text_input("Setor Demandante (Nenhum setor cadastrado)")
 
             if st.button("Cadastrar"):
                 if nome_completo and email and setor_demandante:
@@ -158,7 +165,7 @@ if st.session_state["usuario_logado"]:
     
     # 🏆 Se for admin, exibe aviso
     if st.session_state["perfil"] == "admin":
-        st.sidebar.success("🛠 Modo Administrador Ativado")
+        st.sidebar.warning("🛠 Modo Administrador Ativado")
 
     st.sidebar.success("Você está autenticado. Navegue pelo menu lateral.")
 
