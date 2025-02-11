@@ -3,23 +3,20 @@ import sqlite3
 import json
 import pandas as pd
 
-
 # 📌 Verifica se o usuário está logado antes de permitir acesso à página
 if "usuario_logado" not in st.session_state or not st.session_state["usuario_logado"]:
     st.warning("🔒 Acesso negado! Faça login na página principal para acessar esta seção.")
     st.stop()
 
 st.set_page_config(
-    page_title="Casdastrar Detalhamento",
-    page_icon="♾️",
+    page_title="Cadastro de Regras de Negócio",
+    page_icon="📌",
     layout="wide"
-    )
+)
 
-
-# 📌 Conectar ao banco
 DB_PATH = "database/app_data.db"
 
-
+# 📌 Funções para recuperar os dados
 def get_iniciativas_usuario(perfil, setor):
     """Retorna as iniciativas disponíveis para o usuário."""
     conn = sqlite3.connect(DB_PATH)
@@ -47,39 +44,31 @@ def carregar_dados_iniciativa(id_iniciativa):
     return dados.iloc[0]
 
 
-def salvar_dados_iniciativa(id_iniciativa, objetivo_geral, objetivos_especificos, eixos_tematicos):
+def salvar_dados_iniciativa(id_iniciativa, objetivo_geral, objetivos_especificos):
     """Salva ou atualiza os dados da iniciativa na tabela."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     objetivos_json = json.dumps(objetivos_especificos)
-    eixos_json = json.dumps(eixos_tematicos)
 
     cursor.execute("""
-        INSERT INTO tf_cadastro_regras_negocio (id_iniciativa, objetivo_geral, objetivo_especifico, eixos_tematicos)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO tf_cadastro_regras_negocio (id_iniciativa, objetivo_geral, objetivo_especifico)
+        VALUES (?, ?, ?)
         ON CONFLICT(id_iniciativa) DO UPDATE SET 
             objetivo_geral = excluded.objetivo_geral,
-            objetivo_especifico = excluded.objetivo_especifico,
-            eixos_tematicos = excluded.eixos_tematicos
-    """, (id_iniciativa, objetivo_geral, objetivos_json, eixos_json))
+            objetivo_especifico = excluded.objetivo_especifico
+    """, (id_iniciativa, objetivo_geral, objetivos_json))
 
     conn.commit()
     conn.close()
 
 
-# 📌 Verifica login
-if "usuario_logado" not in st.session_state or not st.session_state["usuario_logado"]:
-    st.warning("🔒 Acesso negado! Faça login para acessar esta seção.")
-    st.stop()
+# 📌 Seleção da Iniciativa
+st.title("📝 Cadastro de Regras de Negócio")
 
 perfil = st.session_state["perfil"]
 setor = st.session_state["setor"]
 
-st.title("📝 Cadastro de Regras de Negócio")
-
-
-# 📌 Seleção da Iniciativa
 st.subheader("📌 Selecione uma Iniciativa")
 iniciativas = get_iniciativas_usuario(perfil, setor)
 
@@ -97,46 +86,71 @@ id_iniciativa = st.selectbox(
 dados_iniciativa = carregar_dados_iniciativa(id_iniciativa)
 
 # 📌 Campos de entrada
-objetivo_geral = st.text_area("🎯 Objetivo Geral", value=dados_iniciativa["objetivo_geral"] if dados_iniciativa else "")
+st.subheader("🎯 Objetivo Geral")
+objetivo_geral = st.text_area(
+    "Descreva o Objetivo Geral da Iniciativa:",
+    value=dados_iniciativa["objetivo_geral"] if dados_iniciativa else "",
+    height=140
+)
+
+st.divider()
 
 st.subheader("🎯 Objetivos Específicos")
-objetivos_especificos = json.loads(dados_iniciativa["objetivo_especifico"]) if dados_iniciativa else []
-novo_objetivo = st.text_input("Novo Objetivo Específico")
+
+# 📌 Inicializa a variável na sessão se ainda não existir
+if "objetivos_especificos" not in st.session_state:
+    st.session_state["objetivos_especificos"] = json.loads(dados_iniciativa["objetivo_especifico"]) if dados_iniciativa else []
+
+# 📌 Campo para adicionar novos objetivos específicos
+novo_objetivo = st.text_area("Novo Objetivo Específico", height=70, placeholder="Digite um novo objetivo específico aqui...")
+
 if st.button("➕ Adicionar Objetivo Específico"):
     if novo_objetivo:
-        objetivos_especificos.append(novo_objetivo)
+        st.session_state["objetivos_especificos"].append(novo_objetivo)
         st.rerun()
 
-# 📌 Exibir os objetivos específicos já cadastrados
-for i, objetivo in enumerate(objetivos_especificos):
-    col1, col2 = st.columns([4, 1])
-    col1.text_input(f"Objetivo {i+1}", value=objetivo, key=f"obj-{i}")
-    if col2.button("❌ Remover", key=f"remover-{i}"):
-        objetivos_especificos.pop(i)
-        st.rerun()
+# 📌 Expanders para exibir objetivos específicos
+for i, objetivo in enumerate(st.session_state["objetivos_especificos"]):
+    with st.expander(f"🎯 {objetivo}", expanded=False):
+        col1, col2 = st.columns([5, 1])
 
+        # 📊 Estatísticas associadas ao objetivo (exemplo fictício)
+        num_ucs = 5  # 🔥 Buscar do BD
+        num_eixos = 3  # 🔥 Buscar do BD
+        num_acoes = 8  # 🔥 Buscar do BD
+        num_insumos = 12  # 🔥 Buscar do BD
 
-# 📌 Eixos Temáticos
-st.subheader("🗂️ Eixos Temáticos")
-eixos_disponiveis = ["Conservação", "Educação Ambiental", "Gestão de Recursos", "Infraestrutura"]  # 🔥 Precisamos buscar do BD futuramente
+        st.markdown(f"""
+        **📍 Unidades de Conservação Associadas:** {num_ucs}  
+        **🗂️ Eixos Temáticos:** {num_eixos}  
+        **⚙️ Ações de Manejo Vinculadas:** {num_acoes}  
+        **📦 Insumos Relacionados:** {num_insumos}  
+        """)
 
-eixos_tematicos = json.loads(dados_iniciativa["eixos_tematicos"]) if dados_iniciativa else []
-novo_eixo = st.selectbox("Selecione um eixo temático:", [""] + eixos_disponiveis)
-if st.button("➕ Adicionar Eixo Temático"):
-    if novo_eixo and novo_eixo not in eixos_tematicos:
-        eixos_tematicos.append(novo_eixo)
-        st.experimental_rerun()
+        # Botão para abrir um diálogo de edição
+        if col2.button("✏️ Editar", key=f"edit-{i}"):
+            st.session_state["edit_objetivo"] = i
+            st.rerun()
 
-# 📌 Exibir eixos temáticos já cadastrados
-for i, eixo in enumerate(eixos_tematicos):
-    col1, col2 = st.columns([4, 1])
-    col1.text_input(f"Eixo {i+1}", value=eixo, key=f"eixo-{i}", disabled=True)
-    if col2.button("❌ Remover", key=f"remover-eixo-{i}"):
-        eixos_tematicos.pop(i)
-        st.experimental_rerun()
+# 📌 Modal para edição do objetivo específico
+if "edit_objetivo" in st.session_state:
+    index = st.session_state["edit_objetivo"]
+    with st.popover(f"📝 Editar Objetivo {index+1}"):
+        novo_texto = st.text_area("Edite o objetivo específico:", value=st.session_state["objetivos_especificos"][index], height=70)
+        
+        # Salvando alteração
+        if st.button("💾 Salvar Alteração"):
+            st.session_state["objetivos_especificos"][index] = novo_texto
+            del st.session_state["edit_objetivo"]
+            st.rerun()
+
+        if st.button("❌ Cancelar"):
+            del st.session_state["edit_objetivo"]
+            st.rerun()
+
+st.divider()
 
 # 📌 Botão de salvar
 if st.button("💾 Salvar Cadastro"):
-    salvar_dados_iniciativa(id_iniciativa, objetivo_geral, objetivos_especificos, eixos_tematicos)
+    salvar_dados_iniciativa(id_iniciativa, objetivo_geral, st.session_state["objetivos_especificos"])
     st.success("✅ Cadastro atualizado com sucesso!")
-
