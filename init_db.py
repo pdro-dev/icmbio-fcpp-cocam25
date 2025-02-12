@@ -153,10 +153,27 @@ def init_database():
         CREATE TABLE IF NOT EXISTS tf_cadastro_regras_negocio (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             id_iniciativa INTEGER NOT NULL,
-            objetivo_geral TEXT,
-            objetivo_especifico TEXT,  -- JSON com múltiplos objetivos específicos
-            eixos_tematicos TEXT,       -- JSON com múltiplos eixos temáticos
+            usuario TEXT NOT NULL,
+            data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            objetivo_geral TEXT NOT NULL,
+            objetivo_especifico TEXT NOT NULL, -- JSON contendo os objetivos específicos
+            eixos_tematicos TEXT NOT NULL, -- JSON contendo os eixos temáticos por objetivo específico
+            acoes_manejo TEXT NOT NULL, -- JSON contendo as ações de manejo associadas a cada eixo temático
+            insumos TEXT NOT NULL, -- JSON contendo os insumos vinculados às ações de manejo
             FOREIGN KEY (id_iniciativa) REFERENCES td_iniciativas(id_iniciativa)
+        )
+    """)
+
+    # 📌 Criando a tabela `td_insumos` 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS td_insumos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            elemento_despesa TEXT NOT NULL,
+            especificacao_padrao TEXT NOT NULL,
+            descricao_insumo TEXT NOT NULL,
+            especificacao_tecnica TEXT NOT NULL,
+            preco_referencia REAL NOT NULL,
+            data_atualizacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 

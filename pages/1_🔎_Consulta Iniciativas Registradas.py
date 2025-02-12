@@ -5,6 +5,7 @@ import os
 import numpy as np
 
 from init_db import init_database
+from init_db import init_samge_database
 
 
 db_path = "database/app_data.db"
@@ -119,6 +120,7 @@ else:
                         os.remove(db_path)
                     try:
                         init_database()
+                        init_samge_database()
                         st.success("Banco de dados recriado com sucesso!")
                         st.rerun()
                     except Exception as e:
@@ -248,7 +250,7 @@ else:
                     st.dataframe(itens_fora, use_container_width=True)
 
 
-
+        st.caption(":small_red_triangle_down: Role a página para baixo para visualizar mais informações.")
 #################################################################################################
 
 
@@ -277,6 +279,8 @@ else:
             uf_list = sorted(df_iniciativa["UF"].dropna().astype(str).unique())
             valor_total_alocado = df_iniciativa["VALOR TOTAL ALOCADO"].sum()
             valor_total_iniciativa = df_iniciativa["Valor Total da Iniciativa"].sum()
+            # 📌 Extraindo valores únicos da coluna "Observações"
+            observacoes_list = df_iniciativa["Observações"].dropna().astype(str).unique().tolist()
 
             unidades = df_iniciativa[["Unidade de Conservação", "VALOR TOTAL ALOCADO", "Valor Total da Iniciativa"]]
 
@@ -302,6 +306,12 @@ else:
 
                 st.markdown("**📍 UFs:**", unsafe_allow_html=True)
                 st.markdown(" ".join([f"<span class='tag'>{uf}</span>" for uf in uf_list]), unsafe_allow_html=True)
+
+                # 📌 Exibição das Observações
+                if observacoes_list:
+                    st.markdown("**📝 Observações:**", unsafe_allow_html=True)
+                    for obs in observacoes_list:
+                        st.markdown(f"- {obs}")
 
             with col2:
                 st.markdown("#### 📊 Valores Financeiros")

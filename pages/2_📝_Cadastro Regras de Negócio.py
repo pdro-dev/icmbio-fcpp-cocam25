@@ -10,15 +10,14 @@ if "usuario_logado" not in st.session_state or not st.session_state["usuario_log
 
 st.set_page_config(
     page_title="Cadastro de Regras de Negócio",
-    page_icon="📌",
+    page_icon=":infinity:",
     layout="wide"
 )
 
 DB_PATH = "database/app_data.db"
 
-# 📌 Funções para recuperar os dados
+# 📌 Função para recuperar iniciativas disponíveis para o usuário
 def get_iniciativas_usuario(perfil, setor):
-    """Retorna as iniciativas disponíveis para o usuário."""
     conn = sqlite3.connect(DB_PATH)
     query = "SELECT id_iniciativa, nome_iniciativa FROM td_iniciativas"
     
@@ -33,31 +32,64 @@ def get_iniciativas_usuario(perfil, setor):
 
 
 def carregar_dados_iniciativa(id_iniciativa):
-    """Carrega os dados já cadastrados para uma iniciativa."""
+    """Retorna a última versão dos dados da iniciativa cadastrada."""
     conn = sqlite3.connect(DB_PATH)
-    query = "SELECT * FROM tf_cadastro_regras_negocio WHERE id_iniciativa = ?"
+    query = """
+        SELECT * FROM tf_cadastro_regras_negocio 
+        WHERE id_iniciativa = ? 
+        ORDER BY data_hora DESC LIMIT 1
+    """
     dados = pd.read_sql_query(query, conn, params=[id_iniciativa])
     conn.close()
-    
-    if dados.empty:
-        return None
-    return dados.iloc[0]
+
+    return dados.iloc[0] if not dados.empty else None
 
 
-def salvar_dados_iniciativa(id_iniciativa, objetivo_geral, objetivos_especificos):
-    """Salva ou atualiza os dados da iniciativa na tabela."""
+def carregar_resumo_iniciativa(setor):
+    """Carrega o resumo da iniciativa a partir da tabela td_dados_resumos_sei filtrando apenas pelo setor demandante."""
+    conn = sqlite3.connect(DB_PATH)
+    query = """
+        SELECT * FROM td_dados_resumos_sei 
+        WHERE demandante = ?
+    """
+    dados = pd.read_sql_query(query, conn, params=[setor])
+    conn.close()
+    return dados if not dados.empty else None
+
+
+
+def salvar_dados_iniciativa(id_iniciativa, usuario, objetivo_geral, objetivos_especificos, eixos_tematicos, acoes_manejo, insumos):
+    """Salva um novo registro de detalhamento da iniciativa, mantendo no máximo 3 registros no histórico."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    objetivos_json = json.dumps(objetivos_especificos)
+    # Contar quantos registros já existem para essa iniciativa
+    cursor.execute("SELECT COUNT(*) FROM tf_cadastro_regras_negocio WHERE id_iniciativa = ?", (id_iniciativa,))
+    total_registros = cursor.fetchone()[0]
 
+    # Se já houver 3 registros, apagar o mais antigo antes de inserir um novo
+    if total_registros >= 3:
+        cursor.execute("""
+            DELETE FROM tf_cadastro_regras_negocio 
+            WHERE id IN (
+                SELECT id FROM tf_cadastro_regras_negocio 
+                WHERE id_iniciativa = ? 
+                ORDER BY data_hora ASC LIMIT 1
+            )
+        """, (id_iniciativa,))
+
+    # Convertendo os dados para JSON
+    objetivos_json = json.dumps(objetivos_especificos)
+    eixos_json = json.dumps(eixos_tematicos)
+    acoes_json = json.dumps(acoes_manejo)
+    insumos_json = json.dumps(insumos)
+
+    # Inserindo novo registro
     cursor.execute("""
-        INSERT INTO tf_cadastro_regras_negocio (id_iniciativa, objetivo_geral, objetivo_especifico)
-        VALUES (?, ?, ?)
-        ON CONFLICT(id_iniciativa) DO UPDATE SET 
-            objetivo_geral = excluded.objetivo_geral,
-            objetivo_especifico = excluded.objetivo_especifico
-    """, (id_iniciativa, objetivo_geral, objetivos_json))
+        INSERT INTO tf_cadastro_regras_negocio 
+        (id_iniciativa, usuario, objetivo_geral, objetivo_especifico, eixos_tematicos, acoes_manejo, insumos)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (id_iniciativa, usuario, objetivo_geral, objetivos_json, eixos_json, acoes_json, insumos_json))
 
     conn.commit()
     conn.close()
@@ -68,47 +100,103 @@ if "edit_objetivo" not in st.session_state:
     st.session_state["edit_objetivo"] = None
 
 # 📌 Seleção da Iniciativa
-st.title("📝 Cadastro de Regras de Negócio")
+st.header("📝 Cadastro de Regras de Negócio")
 
 st.divider()
 
 perfil = st.session_state["perfil"]
 setor = st.session_state["setor"]
 
-st.subheader("📌 Selecione uma Iniciativa")
+
+st.subheader("Iniciativas Estruturantes", help="Iniciativas disponíveis para o usuário: filtro pelo setor demandante cadastrado com o perfil")
+
+# 🔍 Obtendo as iniciativas disponíveis para o usuário
 iniciativas = get_iniciativas_usuario(perfil, setor)
 
 if iniciativas.empty:
     st.warning("🚫 Nenhuma iniciativa disponível para você.")
     st.stop()
 
-id_iniciativa = st.selectbox(
-    "Escolha uma iniciativa:",
+
+
+nova_iniciativa = st.selectbox(
+    "Selecione a Iniciativa:",
     options=iniciativas["id_iniciativa"],
     format_func=lambda x: iniciativas.set_index("id_iniciativa").loc[x, "nome_iniciativa"]
 )
 
-# 📌 Carregar dados da iniciativa
-dados_iniciativa = carregar_dados_iniciativa(id_iniciativa)
+# 📌 Se o usuário mudar de iniciativa, reinicializar os dados armazenados na sessão
+if "id_iniciativa_atual" not in st.session_state or st.session_state["id_iniciativa_atual"] != nova_iniciativa:
+    st.session_state["id_iniciativa_atual"] = nova_iniciativa
+    st.session_state["objetivos_especificos"] = []  # 🔥 Resetando os objetivos específicos
 
 
 
-# 📌 Campos de entrada
-st.subheader("🎯 Objetivo Geral")
+st.divider()
+
+st.caption("Resumo Executivo da Iniciativa", help="ref.: documentos SEI")
+
+# 📌 Função para tratar valores nulos do banco
+def tratar_valor(valor):
+    """ Substitui valores None ou 'NULL' por 'Sem Informação' """
+    if pd.isna(valor) or valor is None or str(valor).strip().lower() == "null":
+        return "(sem informação)"
+    return str(valor).strip()
+
+# 🔍 Carregar o resumo da iniciativa baseado no setor demandante
+resumos = carregar_resumo_iniciativa(setor)
+
+if resumos is not None:
+    for _, resumo in resumos.iterrows():
+        nome_iniciativa = tratar_valor(resumo.get("iniciativa", "Iniciativa Desconhecida"))
+
+        with st.expander(f"📖 {nome_iniciativa}", expanded=False):
+            st.divider()
+            st.write(f"**🎯 Objetivo Geral:** {tratar_valor(resumo.get('objetivo_geral'))}")
+            st.divider()
+            st.write(f"**🏢 Diretoria:** {tratar_valor(resumo.get('diretoria'))}")
+            st.write(f"**📌 Coordenação Geral:** {tratar_valor(resumo.get('coordenação_geral'))}")
+            st.write(f"**🗂 Coordenação:** {tratar_valor(resumo.get('coordenação'))}")
+            st.write(f"**📍 Demandante:** {tratar_valor(resumo.get('demandante'))}")
+            st.divider()
+            st.write(f"**📝 Introdução:** {tratar_valor(resumo.get('introdução'))}")
+            st.divider()
+            st.write(f"**💡 Justificativa:** {tratar_valor(resumo.get('justificativa'))}")
+            st.divider()
+            st.write(f"**🏞 Unidades de Conservação / Benefícios:** {tratar_valor(resumo.get('unidades_de_conservação_beneficiadas'))}")
+            st.divider()
+            st.write(f"**🔬 Metodologia:** {tratar_valor(resumo.get('metodologia'))}")
+
+
+
+st.divider()
+
+# 📌 Carregar dados da iniciativa selecionada
+dados_iniciativa = carregar_dados_iniciativa(nova_iniciativa)
+
+
+# 📌 Verificação e acesso aos dados corretamente
+objetivo_geral = dados_iniciativa.get("objetivo_geral", "Sem Informação") if dados_iniciativa is not None else "Sem Informação"
+
+# 📌 Campo de entrada do Objetivo Geral
+st.subheader("🎯 Objetivo Geral", help="Declaração ampla e inspiradora do propósito macro a ser alcançado no longo prazo.")
 objetivo_geral = st.text_area(
     "Descreva o Objetivo Geral da Iniciativa:",
-    value=dados_iniciativa["objetivo_geral"] if dados_iniciativa else "",
-    height=140
+    value=objetivo_geral,
+    height=140,
+    placeholder="Propósito macro a ser alcançado no longo prazo."
 )
 
 st.divider()
 
-st.subheader("🎯 Objetivos Específicos")
+# 📌 Objetivos Específicos
+st.subheader("🎯 Objetivos Específicos", help="Objetivos específicos são resultados concretos e mensuráveis que contribuem diretamente para o Objetivo Geral.")
 
-# 📌 Inicializa a variável na sessão se ainda não existir
-if "objetivos_especificos" not in st.session_state:
-    st.session_state["objetivos_especificos"] = json.loads(dados_iniciativa["objetivo_especifico"]) if dados_iniciativa else []
-
+if "objetivos_especificos" not in st.session_state or not st.session_state["objetivos_especificos"]:
+    if dados_iniciativa is not None and not dados_iniciativa.empty:
+        st.session_state["objetivos_especificos"] = json.loads(dados_iniciativa.get("objetivo_especifico", "[]"))
+    else:
+        st.session_state["objetivos_especificos"] = []
 
 # 📌 Função para abrir o **dialog modal**
 @st.dialog("📝 Editar Objetivo Específico", width="large")
@@ -122,27 +210,23 @@ def editar_objetivo_especifico(index):
 
     if salvar:
         st.session_state["objetivos_especificos"][index] = novo_texto
-        st.session_state["edit_objetivo"] = None  # Define como None para evitar erro
         st.rerun()
 
     if cancelar:
-        st.session_state["edit_objetivo"] = None  # Define como None para evitar erro
         st.rerun()
 
 
 # 📌 Campo para adicionar novos objetivos específicos
-novo_objetivo = st.text_area("Novo Objetivo Específico", height=70, placeholder="Digite um novo objetivo específico aqui...")
+novo_objetivo = st.text_area("Novo Objetivo Específico", height=70, placeholder="Resultados concretos e mensuráveis que contribuem diretamente para o Objetivo Geral.")
 
 if st.button("➕ Adicionar Objetivo Específico"):
     if novo_objetivo:
         st.session_state["objetivos_especificos"].append(novo_objetivo)
         st.rerun()
 
-# 📌 Expanders para exibir objetivos específicos
+# 📌 Expanders para exibir objetivos específicos com numeração e botão de exclusão
 for i, objetivo in enumerate(st.session_state["objetivos_especificos"]):
-    with st.expander(f"🎯 {objetivo}", expanded=False):
-        col1, col2 = st.columns([5, 1])
-
+    with st.expander(f"🎯 Obj. Específico {i + 1}: {objetivo}", expanded=False):
         # 📊 Estatísticas associadas ao objetivo (exemplo fictício)
         num_ucs = 5  # 🔥 Buscar do BD
         num_eixos = 3  # 🔥 Buscar do BD
@@ -156,14 +240,29 @@ for i, objetivo in enumerate(st.session_state["objetivos_especificos"]):
         **📦 Insumos Relacionados:** {num_insumos}  
         """)
 
-        # Botão para abrir um **diálogo modal**
-        if col2.button("✏️ Editar", key=f"edit-{i}"):
-            st.session_state["edit_objetivo"] = i
-            editar_objetivo_especifico(i)
+        # 📌 Criando três colunas: uma grande (para espaçamento) e uma pequena para os botões
+        col_space, col_buttons = st.columns([5, 1])
+
+        # Botões alinhados à direita dentro da coluna pequena
+        with col_buttons:
+            if st.button("✏️ Editar", key=f"edit-{i}"):
+                editar_objetivo_especifico(i)
+
+            if st.button("❌ Remover", key=f"remove-{i}"):
+                del st.session_state["objetivos_especificos"][i]
+                st.rerun()
 
 st.divider()
 
 # 📌 Botão de salvar
 if st.button("💾 Salvar Cadastro"):
-    salvar_dados_iniciativa(id_iniciativa, objetivo_geral, st.session_state["objetivos_especificos"])
+    salvar_dados_iniciativa(
+        nova_iniciativa,
+        st.session_state["cpf"],
+        objetivo_geral,
+        st.session_state["objetivos_especificos"],
+        [],  # Eixos Temáticos (placeholder)
+        [],  # Ações de Manejo (placeholder)
+        []   # Insumos (placeholder)
+    )
     st.success("✅ Cadastro atualizado com sucesso!")
