@@ -187,6 +187,10 @@ objetivo_geral = st.text_area(
     placeholder="Propósito macro a ser alcançado no longo prazo."
 )
 
+
+##########################################################################################
+
+
 st.divider()
 
 # 📌 Objetivos Específicos
@@ -198,22 +202,147 @@ if "objetivos_especificos" not in st.session_state or not st.session_state["obje
     else:
         st.session_state["objetivos_especificos"] = []
 
-# 📌 Função para abrir o **dialog modal**
+
+
+
+def get_options_from_table(table_name, id_col, name_col, filter_col=None, filter_val=None):
+    """Busca os valores de uma tabela e retorna um dicionário {id: nome}.
+       Se filter_col e filter_val forem fornecidos, filtra os resultados.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    query = f"SELECT {id_col}, {name_col} FROM {table_name}"
+    params = ()
+    if filter_col and filter_val:
+        query += f" WHERE {filter_col} = ?"
+        params = (filter_val,)
+
+    cursor.execute(query, params)
+    results = cursor.fetchall()
+    conn.close()
+    return {row[0]: row[1] for row in results}
+
+# 📌 Carregar opções do banco de dados com os nomes corretos
+eixos_opcoes = get_options_from_table("td_samge_processos", "id_p", "nome")
+insumos_opcoes = get_options_from_table("td_insumos", "id", "elemento_despesa")
+
+
+# 📌 Modal de edição de objetivo específico
 @st.dialog("📝 Editar Objetivo Específico", width="large")
 def editar_objetivo_especifico(index):
-    """Abre o modal de edição de um objetivo específico"""
-    novo_texto = st.text_area("Edite o objetivo específico:", value=st.session_state["objetivos_especificos"][index], height=70)
-    
+    """Modal para editar um objetivo específico e seus relacionamentos"""
+
+    if "detalhamento_objetivos" not in st.session_state:
+        st.session_state["detalhamento_objetivos"] = {}
+
+    # 📌 Garante que cada objetivo tenha um ID único
+    if "objetivos_ids" not in st.session_state:
+        st.session_state["objetivos_ids"] = {}
+
+    if index not in st.session_state["objetivos_ids"]:
+        st.session_state["objetivos_ids"][index] = index + 1  # Gera um ID sequencial
+
+    id_objetivo = st.session_state["objetivos_ids"][index]
+    objetivo = st.session_state["objetivos_especificos"][index]
+
+    edit_mode = st.toggle("✏️ Editar Objetivo", key=f"toggle_edit_{index}")
+
+    objetivo_editado = st.text_area(
+        "Objetivo Específico:",
+        value=objetivo,
+        height=70,
+        disabled=not edit_mode
+    )
+
+    if edit_mode and objetivo_editado != objetivo:
+        st.session_state["objetivos_especificos"][index] = objetivo_editado
+
+    st.divider()
+
+    # 📌 Seção: Eixos Temáticos
+    with st.expander("📂 Eixos Temáticos", expanded=True):
+        if "eixos_tematicos" not in st.session_state:
+            st.session_state["eixos_tematicos"] = {}
+
+        eixos_selecionados = st.multiselect(
+            "Selecione os Eixos Temáticos:",
+            options=list(eixos_opcoes.keys()),
+            format_func=lambda x: eixos_opcoes[x],
+            key=f"eixos_{id_objetivo}"
+        )
+
+        if eixos_selecionados:
+            st.session_state["eixos_tematicos"][id_objetivo] = {
+                "eixos": eixos_selecionados,
+                "acoes_manejo": {}
+            }
+
+    # 📌 Seção: Ações de Manejo (Filtradas pelo Eixo Temático)
+    with st.expander("⚙️ Ações de Manejo", expanded=False):
+        if id_objetivo in st.session_state["eixos_tematicos"]:
+            eixos_selecionados = st.session_state["eixos_tematicos"][id_objetivo]["eixos"]
+            eixo_acao_map = {}
+
+            for eixo_id in eixos_selecionados:
+                # 📌 Busca as ações de manejo associadas ao processo/eixo temático selecionado
+                acoes_opcoes = get_options_from_table("td_samge_acoes_manejo", "id_ac", "nome", "processo_id", eixo_id)
+
+                acoes_selecionadas = st.multiselect(
+                    f"📌 Ações de Manejo para **{eixos_opcoes[eixo_id]}**:",
+                    options=list(acoes_opcoes.keys()),
+                    format_func=lambda x: acoes_opcoes[x],
+                    key=f"acoes_{id_objetivo}_{eixo_id}"
+                )
+                
+                if acoes_selecionadas:
+                    eixo_acao_map[eixo_id] = acoes_selecionadas
+
+            if eixo_acao_map:
+                st.session_state["eixos_tematicos"][id_objetivo]["acoes_manejo"] = eixo_acao_map
+
+
+    # 📌 Seção: Insumos
+        with st.expander("📦 Insumos", expanded=False):
+            insumo_map = {}
+            for eixo in dados_objetivo.get("eixos_tematicos", []):
+                eixo_id = eixo["id_eixo"]
+
+                for acao in eixo.get("acoes_manejo", []):
+                    acao_id = acao["id_acao"]
+
+                    # 🔥 Verifica se a chave acao_id existe no dicionário antes de acessá-la
+                    nome_acao = acoes_opcoes.get(acao_id, "Ação Não Encontrada")
+                    nome_eixo = eixos_opcoes.get(eixo_id, "Eixo Não Encontrado")
+
+                    insumos_selecionados = st.multiselect(
+                        f"📌 Insumos para {nome_acao} ({nome_eixo}):",
+                        options=list(insumos_opcoes.keys()),
+                        format_func=lambda x: insumos_opcoes[x],
+                        default=acao.get("insumos", []),
+                        key=f"insumos_{id_objetivo}_{eixo_id}_{acao_id}"
+                    )
+
+                    acao["insumos"] = insumos_selecionados
+
+
+            if insumo_map:
+                st.session_state["eixos_tematicos"][id_objetivo]["insumos"] = insumo_map
+
+    st.divider()
+
+    # 📌 Botões de ação no modal
     col1, col2 = st.columns(2)
-    salvar = col1.button("💾 Salvar Alteração")
-    cancelar = col2.button("❌ Cancelar")
+    salvar = col1.button("💾 Salvar Alteração", key=f"salvar_obj_{index}")
+    cancelar = col2.button("❌ Cancelar", key=f"cancelar_obj_{index}")
 
     if salvar:
-        st.session_state["objetivos_especificos"][index] = novo_texto
+        st.session_state["objetivos_especificos"][index] = objetivo_editado
         st.rerun()
 
     if cancelar:
         st.rerun()
+
 
 
 # 📌 Campo para adicionar novos objetivos específicos
@@ -227,28 +356,31 @@ if st.button("➕ Adicionar Objetivo Específico"):
 # 📌 Expanders para exibir objetivos específicos com numeração e botão de exclusão
 for i, objetivo in enumerate(st.session_state["objetivos_especificos"]):
     with st.expander(f"🎯 Obj. Específico {i + 1}: {objetivo}", expanded=False):
-        # 📊 Estatísticas associadas ao objetivo (exemplo fictício)
-        num_ucs = 5  # 🔥 Buscar do BD
-        num_eixos = 3  # 🔥 Buscar do BD
-        num_acoes = 8  # 🔥 Buscar do BD
-        num_insumos = 12  # 🔥 Buscar do BD
-
-        st.markdown(f"""
-        **📍 Unidades de Conservação Associadas:** {num_ucs}  
-        **🗂️ Eixos Temáticos:** {num_eixos}  
-        **⚙️ Ações de Manejo Vinculadas:** {num_acoes}  
-        **📦 Insumos Relacionados:** {num_insumos}  
-        """)
-
         # 📌 Criando três colunas: uma grande (para espaçamento) e uma pequena para os botões
-        col_space, col_buttons = st.columns([5, 1])
+        col_space, col_buttons = st.columns([10, 1])
+        
+        with col_space:
+            # 📊 Estatísticas associadas ao objetivo (exemplo fictício)
+            num_ucs = 5  # 🔥 Buscar do BD
+            num_eixos = 3  # 🔥 Buscar do BD
+            num_acoes = 8  # 🔥 Buscar do BD
+            num_insumos = 12  # 🔥 Buscar do BD
+
+            st.markdown(f"""
+            **📍 Unidades de Conservação Associadas:** {num_ucs}  
+            **🗂️ Eixos Temáticos:** {num_eixos}  
+            **⚙️ Ações de Manejo Vinculadas:** {num_acoes}  
+            **📦 Insumos Relacionados:** {num_insumos}  
+            """)
+
+        
 
         # Botões alinhados à direita dentro da coluna pequena
         with col_buttons:
-            if st.button("✏️ Editar", key=f"edit-{i}"):
+            if st.button("📝", key=f"edit-{i}", use_container_width=True):
                 editar_objetivo_especifico(i)
 
-            if st.button("❌ Remover", key=f"remove-{i}"):
+            if st.button("❌", key=f"remove-{i}", use_container_width=True):
                 del st.session_state["objetivos_especificos"][i]
                 st.rerun()
 

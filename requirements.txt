@@ -6,3 +6,4 @@ openpyxl
 # time
 # sqlite3
 # os
+matplotlib
