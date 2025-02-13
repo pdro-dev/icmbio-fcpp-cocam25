@@ -195,6 +195,111 @@ def get_options_from_table(table_name, id_col, name_col, filter_col=None, filter
 
     return {str(row[0]): row[1] for row in results}
 
+
+def reload_iniciativa(id_iniciativa: int):
+    """Recarrega do banco os dados da iniciativa e sobrescreve o st.session_state."""
+    dados_iniciativa = carregar_dados_iniciativa(id_iniciativa)
+    if dados_iniciativa is not None:
+        st.session_state["objetivo_geral"] = dados_iniciativa["objetivo_geral"]
+        st.session_state["objetivos_especificos"] = json.loads(dados_iniciativa["objetivo_especifico"])
+        st.session_state["eixos_tematicos"] = json.loads(dados_iniciativa["eixos_tematicos"])
+        st.success("Dados recarregados do banco com sucesso!")
+    else:
+        st.session_state["objetivo_geral"] = ""
+        st.session_state["objetivos_especificos"] = []
+        st.session_state["eixos_tematicos"] = []
+        st.warning("Nenhum registro encontrado no banco para esta iniciativa.")
+
+
+def exibir_info_lateral(id_iniciativa: int):
+    """Exibe no sidebar as informações extra de diversas tabelas sobre a iniciativa selecionada."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    st.sidebar.write("### Informações da Iniciativa")
+
+    # 1) Buscar dados de 'tf_cadastros_iniciativas' + demandante e contagem de unidades
+    query_inic = """
+    SELECT 
+        ci.id_demandante, 
+        COUNT(DISTINCT ci.cnuc) AS num_unidades, 
+        d.nome_demandante
+    FROM tf_cadastros_iniciativas ci
+    JOIN td_demandantes d 
+      ON ci.id_demandante = d.id_demandante
+    WHERE ci.id_iniciativa = ?
+    GROUP BY ci.id_demandante
+    """
+    row_inic = cursor.execute(query_inic, (id_iniciativa,)).fetchone()
+    if row_inic:
+        id_demandante, num_unidades, nome_demandante = row_inic
+
+        st.sidebar.write(f"**Demandante:** {nome_demandante}")
+        st.sidebar.write(f"**Número de Unidades:** {num_unidades}")
+    else:
+        st.sidebar.info("Iniciativa não encontrada em tf_cadastros_iniciativas.")
+
+    # 2) Exibir dados de 'td_dados_resumos_sei' via id_resumo vinculado a id_iniciativa
+    query_resumo = """
+    SELECT diretoria, coordenação_geral, coordenação
+    FROM td_dados_resumos_sei
+    WHERE id_resumo = ?
+    LIMIT 1
+    """
+    row_resumo = cursor.execute(query_resumo, (id_iniciativa,)).fetchone()
+    if row_resumo:
+        dir_, coord_geral, coord_ = row_resumo
+        st.sidebar.write(f"**Diretoria:** {dir_ if dir_ else 'sem informação'}")
+        st.sidebar.write(f"**Coord. Geral:** {coord_geral if coord_geral else 'sem informação'}")
+        st.sidebar.write(f"**Coordenação:** {coord_ if coord_ else 'sem informação'}")
+    else:
+        st.sidebar.info("Sem resumo SEI cadastrado para esta iniciativa.")
+
+    # 3) Buscar Eixos existentes em tf_cadastro_regras_negocio e exibir como "pills" desativadas
+    query_eixos = """
+    SELECT eixos_tematicos
+    FROM tf_cadastro_regras_negocio
+    WHERE id_iniciativa = ?
+    ORDER BY data_hora DESC
+    LIMIT 1
+    """
+    row_eixos = cursor.execute(query_eixos, (id_iniciativa,)).fetchone()
+    conn.close()  # Já podemos fechar aqui
+
+    if row_eixos:
+        eixos_tematicos_json = row_eixos[0]  # Coluna eixos_tematicos
+        if eixos_tematicos_json:
+            # Decodifica JSON em lista de dicts, ex: [{"id_eixo":..., "nome_eixo":"...", ...}, ...]
+            eixos_tematicos_list = json.loads(eixos_tematicos_json)
+            # Gera a lista de nomes
+            lista_nomes_eixos = [eixo.get("nome_eixo", "Eixo Sem Nome") for eixo in eixos_tematicos_list]
+            # Exibe como 'pills' usando multiselect disabled=True
+            st.sidebar.pills(
+                "Eixos Temáticos gravados:",
+                options=lista_nomes_eixos,
+                default=None,
+                disabled=False
+            )
+        else:
+            st.sidebar.info("Nenhum eixo temático cadastrado no momento.")
+    else:
+        st.sidebar.info("Nenhum eixo temático cadastrado.")
+
+
+
+    
+    st.divider()
+    if st.sidebar.button("🔄 Recarregar informações do banco de dados"):
+    # Pressionando este botão, você recarrega a iniciativa selecionada
+    # Necessita saber qual iniciativa está selecionada (nova_iniciativa)
+        if "id_iniciativa_atual" in st.session_state:
+            reload_iniciativa(st.session_state["id_iniciativa_atual"])
+            st.rerun()
+        else:
+            st.sidebar.warning("Selecione uma iniciativa primeiro.")
+
+
+
 # =============================================================================
 #                               INÍCIO DA PÁGINA
 # =============================================================================
@@ -236,6 +341,9 @@ if resumos is not None:
 
 st.divider()
 
+
+
+
 # ---------- Seleciona Iniciativa que será detalhada -------------
 iniciativas = get_iniciativas_usuario(perfil, setor)
 if iniciativas.empty:
@@ -249,23 +357,28 @@ nova_iniciativa = st.selectbox(
     key="sel_iniciativa"
 )
 
-if "id_iniciativa_atual" not in st.session_state or st.session_state["id_iniciativa_atual"] != nova_iniciativa:
-    st.session_state.update({
-        "id_iniciativa_atual": nova_iniciativa,
-        "carregou_iniciativa": None,
-        "objetivo_geral": "",
-        "objetivos_especificos": [],
-        "eixos_tematicos": []
-    })
+# Carregar dados do banco APENAS se o usuário ainda não tiver alterado algo no session_state
+if "carregou_iniciativa" not in st.session_state or st.session_state["carregou_iniciativa"] != nova_iniciativa:
+    dados_iniciativa = carregar_dados_iniciativa(nova_iniciativa)
 
-dados_iniciativa = carregar_dados_iniciativa(nova_iniciativa)
-if dados_iniciativa is not None and st.session_state["carregou_iniciativa"] != nova_iniciativa:
-    st.session_state.update({
-        "carregou_iniciativa": nova_iniciativa,
-        "objetivo_geral": dados_iniciativa.get("objetivo_geral", ""),
-        "objetivos_especificos": json.loads(dados_iniciativa.get("objetivo_especifico", "[]")),
-        "eixos_tematicos": json.loads(dados_iniciativa.get("eixos_tematicos", "[]"))
-    })
+    if dados_iniciativa is not None:
+        st.session_state["objetivo_geral"] = dados_iniciativa["objetivo_geral"]
+        st.session_state["objetivos_especificos"] = json.loads(dados_iniciativa["objetivo_especifico"])
+        st.session_state["eixos_tematicos"] = json.loads(dados_iniciativa["eixos_tematicos"])
+    else:
+        st.session_state["objetivo_geral"] = ""
+        st.session_state["objetivos_especificos"] = []
+        st.session_state["eixos_tematicos"] = []
+
+    # Marca que já carregou os dados desta iniciativa, para evitar sobrescrita
+    st.session_state["carregou_iniciativa"] = nova_iniciativa
+
+
+# Menu lateral
+# st.sidebar.title("Menu")
+# st.write("Exibir informações adicionais")
+# exibir_info_lateral(nova_iniciativa)
+
 
 # --------------- SEÇÃO: OBJETIVO GERAL  ---------------
 st.subheader("🎯 Objetivo Geral")
@@ -277,28 +390,43 @@ st.session_state["objetivo_geral"] = st.text_area(
 )
 
 # --------------- SEÇÃO: OBJETIVOS ESPECÍFICOS  ---------------
-st.subheader("🎯 Objetivos Específicos (tabela editável)")
+st.subheader("🎯 Objetivos Específicos")
 
-obj_df = pd.DataFrame({
-    "Objetivo Específico": st.session_state["objetivos_especificos"]
-}, dtype=str) 
+# Cria o formulário
+with st.form("form_objetivos_especificos"):
+    with st.expander("Objetivos Específicos Listados", expanded=False):
+        st.write("📝 Edite os objetivos específicos da iniciativa.")
+        st.write("ℹ️ Use a tabela para adicionar, editar ou remover objetivos específicos.")
+        # Monta DataFrame inicial
+        obj_df = pd.DataFrame({
+            "Objetivo Específico": st.session_state["objetivos_especificos"]
+        }, dtype=str)
 
-edited_df = st.data_editor(
-    obj_df,
-    num_rows="dynamic",
-    use_container_width=True,
-    column_config={
-        "Objetivo Específico": st.column_config.TextColumn(
-            "Descrição do Objetivo",
-            help="Digite cada objetivo específico",
-            default="",
-            max_chars=500
+        edited_df = st.data_editor(
+            obj_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "Objetivo Específico": st.column_config.TextColumn(
+                    "Descrição do Objetivo",
+                    help="Digite cada objetivo específico",
+                    default="",
+                    max_chars=500
+                )
+            },
+            key="data_editor_objetivos"
         )
-    },
-    key="data_editor_objetivos"
-)
 
-st.session_state["objetivos_especificos"] = edited_df["Objetivo Específico"].dropna().tolist()
+        # Botão de submit do formulário
+        submit_obj = st.form_submit_button("Aplicar alterações")
+
+        # Só atualiza session_state se o usuário clicar no botão de submit
+        if submit_obj:
+            st.session_state["objetivos_especificos"] = (
+                edited_df["Objetivo Específico"].dropna().tolist()
+            )
+            st.success("Objetivos específicos atualizados com sucesso!")
+
 st.divider()
 
 # --------------- SEÇÃO: EIXOS TEMÁTICOS ---------------
@@ -316,12 +444,13 @@ def calcular_estatisticas_eixo(eixo):
 
 @st.dialog("Edição do Eixo Temático", width="large")
 def editar_eixo_dialog(index_eixo):
-    if index_eixo < 0 or index_eixo >= len(st.session_state["eixos_tematicos"]):
-        st.error("Eixo Temático não encontrado.")
+    # Em vez de exibir erro, faça apenas um check silencioso ou avise com warning:
+    if not (0 <= index_eixo < len(st.session_state["eixos_tematicos"])):
+        st.warning("Índice de Eixo Temático fora do intervalo.")
         return
 
     eixo = st.session_state["eixos_tematicos"][index_eixo]
-    st.subheader(f"Editando: {eixo.get('nome_eixo','(sem nome)')}")
+    st.subheader(f"Editando: {eixo.get('nome_eixo', '(sem nome)')}")
 
     # --------------------------------------------------
     # Passo 1: Selecionar Ações
@@ -363,7 +492,7 @@ def editar_eixo_dialog(index_eixo):
         )
 
         # Processa o submit do formulário de ações
-        submit_acoes = st.form_submit_button("Selecionar Ações")
+        submit_acoes = st.form_submit_button("Avançar")
         if submit_acoes:
             # Atualiza lista de ações selecionadas no session_state
             novas_acoes = edited_acoes[edited_acoes["Selecionada"]]["ID"].tolist()
@@ -449,6 +578,7 @@ def editar_eixo_dialog(index_eixo):
                 # Salva tudo no session state
                 st.session_state["eixos_tematicos"][index_eixo] = eixo
                 st.success("Insumos atualizados!")
+                st.toast("Insumos atualizados!")
                 st.rerun()
 
     # --------------------------------------------------
@@ -461,24 +591,25 @@ def editar_eixo_dialog(index_eixo):
 
 
 # Main UI para Eixos
-col_sel_eixo, col_btn_eixo = st.columns([0.8, 0.2])
-with col_sel_eixo:
-    novo_eixo_id = st.selectbox(
-        "Escolha um Eixo (Processo SAMGe) para adicionar:",
-        options=[None] + sorted(eixos_opcoes.keys(), key=lambda x: eixos_opcoes[x]),
-        format_func=lambda x: eixos_opcoes.get(x, "Selecione..."),
-        key="sel_novo_eixo"
+#col_sel_eixo, col_btn_eixo = st.columns([8,2])
+#with col_sel_eixo:
+novo_eixo_id = st.selectbox(
+    "Escolha um Eixo (Processo SAMGe) para adicionar:",
+    options=[None] + sorted(eixos_opcoes.keys(), key=lambda x: eixos_opcoes[x]),
+    format_func=lambda x: eixos_opcoes.get(x, "Selecione..."),
+    key="sel_novo_eixo"
     )
-with col_sel_eixo:
-    if st.button("➕ Adicionar Eixo Temático", key="btn_add_eixo"):
-        if novo_eixo_id and novo_eixo_id not in [e["id_eixo"] for e in st.session_state["eixos_tematicos"]]:
-            st.session_state["eixos_tematicos"].append({
-                "id_eixo": novo_eixo_id,
-                "nome_eixo": eixos_opcoes.get(novo_eixo_id, "Novo Eixo"),
-                "acoes_manejo": {},
-                "valor_ucs": {}
-            })
-            st.rerun()
+#with col_sel_eixo:
+if st.button("➕ Adicionar Eixo Temático", key="btn_add_eixo"):
+    if novo_eixo_id and novo_eixo_id not in [e["id_eixo"] for e in st.session_state["eixos_tematicos"]]:
+        st.session_state["eixos_tematicos"].append({
+            "id_eixo": novo_eixo_id,
+            "nome_eixo": eixos_opcoes.get(novo_eixo_id, "Novo Eixo"),
+            "acoes_manejo": {},
+            "valor_ucs": {}
+        })
+        st.rerun()
+
 
 for i, eixo in enumerate(st.session_state["eixos_tematicos"]):
     stats = calcular_estatisticas_eixo(eixo)
@@ -487,20 +618,29 @@ for i, eixo in enumerate(st.session_state["eixos_tematicos"]):
         col1.metric("Ações", stats["acoes"])
         col2.metric("Insumos", stats["insumos"])
         col3.metric("Valor Total", f"R$ {stats['valor_total']:,.2f}")
-        
+
         col_edit, col_del = st.columns(2)
         if col_edit.button("✏️ Editar", key=f"btn_edit_{i}"):
             st.session_state["modo_editar_eixo"] = i
             st.session_state.modal_fechado = False
             st.rerun()
-        
+
         if col_del.button("🗑️ Excluir", key=f"btn_del_{i}"):
-            del st.session_state["eixos_tematicos"][i]
+            # Remover o eixo corretamente do session_state
+            st.session_state["eixos_tematicos"].pop(i)
             st.rerun()
 
-if "modo_editar_eixo" in st.session_state and not st.session_state.get("modal_fechado", True):
-    editar_eixo_dialog(st.session_state["modo_editar_eixo"])
-    st.stop()
+modo_idx = st.session_state.get("modo_editar_eixo")
+modal_fechado = st.session_state.get("modal_fechado", True)
+
+# Verifica se há índice válido e se o modal não está fechado
+if modo_idx is not None and not modal_fechado:
+    if 0 <= modo_idx < len(st.session_state["eixos_tematicos"]):
+        editar_eixo_dialog(modo_idx)
+        st.stop()
+    else:
+        # Se o índice for inválido, podemos simplesmente resetar
+        st.session_state["modo_editar_eixo"] = None
 
 st.divider()
 if st.button("💾 Salvar Cadastro", key="btn_salvar_geral"):
@@ -512,5 +652,6 @@ if st.button("💾 Salvar Cadastro", key="btn_salvar_geral"):
         eixos_tematicos=st.session_state["eixos_tematicos"]
     )
     st.success("✅ Cadastro atualizado com sucesso!")
+    st.toast("Cadastro atualizado com sucesso!")
     st.session_state["modo_editar_eixo"] = None
     st.rerun()

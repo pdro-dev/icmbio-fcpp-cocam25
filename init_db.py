@@ -87,7 +87,8 @@ def init_database():
 
 
 
-    # 📌 Criar a tabela no banco de dados
+    # 📌 Criar a tabela de resumos no banco de dados
+    cursor.execute(""" DROP TABLE IF EXISTS td_dados_resumos_sei """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS td_dados_resumos_sei (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,6 +96,7 @@ def init_database():
             coordenacao_geral TEXT,
             coordenacao TEXT,
             demandante TEXT,
+            id_resumo TEXT,
             iniciativa TEXT,
             introducao TEXT,
             justificativa TEXT,
