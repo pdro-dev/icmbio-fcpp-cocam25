@@ -283,6 +283,10 @@ else:
             observacoes_list = df_iniciativa["Observações"].dropna().astype(str).unique().tolist()
 
             unidades = df_iniciativa[["Unidade de Conservação", "VALOR TOTAL ALOCADO", "Valor Total da Iniciativa"]]
+            
+            st.divider()
+            st.markdown("#### Nome da Iniciativa Estruturante")
+            st.markdown(df_iniciativa["Nome da Proposta/Iniciativa Estruturante"].iloc[0])
 
             # 📌 Layout do relatório
             col1, col2 = st.columns(2)

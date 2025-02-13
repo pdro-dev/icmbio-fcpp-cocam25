@@ -3,9 +3,9 @@ import sqlite3
 import json
 import pandas as pd
 
-# 📌 Verifica se o usuário está logado antes de permitir acesso à página
+# Verifica login
 if "usuario_logado" not in st.session_state or not st.session_state["usuario_logado"]:
-    st.warning("🔒 Acesso negado! Faça login na página principal para acessar esta seção.")
+    st.warning("🔒 Acesso negado! Faça login.")
     st.stop()
 
 st.set_page_config(
@@ -14,25 +14,43 @@ st.set_page_config(
     layout="wide"
 )
 
+# CSS Customizado para modais
+st.markdown("""
+    <style>
+        div[data-modal-container='true'] {
+            z-index: 1002 !important;
+        }
+        .stDataEditor div[data-testid="stVerticalBlock"] {
+            gap: 0.2rem;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 DB_PATH = "database/app_data.db"
 
-# 📌 Função para recuperar iniciativas disponíveis para o usuário
+@st.cache_data
 def get_iniciativas_usuario(perfil, setor):
     conn = sqlite3.connect(DB_PATH)
     query = "SELECT id_iniciativa, nome_iniciativa FROM td_iniciativas"
-    
     if perfil != "admin":
-        query += " WHERE id_iniciativa IN (SELECT id_iniciativa FROM tf_cadastros_iniciativas WHERE id_demandante = (SELECT id_demandante FROM td_demandantes WHERE nome_demandante = ?))"
+        query += """
+            WHERE id_iniciativa IN (
+               SELECT id_iniciativa 
+               FROM tf_cadastros_iniciativas 
+               WHERE id_demandante = (
+                  SELECT id_demandante FROM td_demandantes WHERE nome_demandante = ?
+               )
+            )
+        """
         iniciativas = pd.read_sql_query(query, conn, params=[setor])
     else:
         iniciativas = pd.read_sql_query(query, conn)
-
     conn.close()
     return iniciativas
 
-
+@st.cache_data
 def carregar_dados_iniciativa(id_iniciativa):
-    """Retorna a última versão dos dados da iniciativa cadastrada."""
+    """Retorna a última versão dos dados da iniciativa cadastrada em tf_cadastro_regras_negocio."""
     conn = sqlite3.connect(DB_PATH)
     query = """
         SELECT * FROM tf_cadastro_regras_negocio 
@@ -41,33 +59,40 @@ def carregar_dados_iniciativa(id_iniciativa):
     """
     dados = pd.read_sql_query(query, conn, params=[id_iniciativa])
     conn.close()
-
     return dados.iloc[0] if not dados.empty else None
 
-
+@st.cache_data
 def carregar_resumo_iniciativa(setor):
-    """Carrega o resumo da iniciativa a partir da tabela td_dados_resumos_sei filtrando apenas pelo setor demandante."""
+    """Exemplo simples: carrega o resumo a partir de td_dados_resumos_sei, filtrando por demandante."""
     conn = sqlite3.connect(DB_PATH)
-    query = """
-        SELECT * FROM td_dados_resumos_sei 
-        WHERE demandante = ?
-    """
+    query = "SELECT * FROM td_dados_resumos_sei WHERE demandante = ?"
     dados = pd.read_sql_query(query, conn, params=[setor])
     conn.close()
     return dados if not dados.empty else None
 
+def salvar_dados_iniciativa(
+    id_iniciativa,
+    usuario,
+    objetivo_geral,
+    objetivos_especificos,
+    eixos_tematicos
+):
+    """
+    Salva registro na tf_cadastro_regras_negocio, mantendo histórico máximo de 3 registros.
+    - objetivos_especificos: lista de strings
+    - eixos_tematicos: lista de dicts, cada dict pode ter {id_eixo, nome_eixo, acoes_manejo, ...}
+    """
 
-
-def salvar_dados_iniciativa(id_iniciativa, usuario, objetivo_geral, objetivos_especificos, eixos_tematicos, acoes_manejo, insumos):
-    """Salva um novo registro de detalhamento da iniciativa, mantendo no máximo 3 registros no histórico."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Contar quantos registros já existem para essa iniciativa
-    cursor.execute("SELECT COUNT(*) FROM tf_cadastro_regras_negocio WHERE id_iniciativa = ?", (id_iniciativa,))
+    # 1. Remove o registro mais antigo se já tiver 3
+    cursor.execute(
+        "SELECT COUNT(*) FROM tf_cadastro_regras_negocio WHERE id_iniciativa = ?",
+        (id_iniciativa,)
+    )
     total_registros = cursor.fetchone()[0]
 
-    # Se já houver 3 registros, apagar o mais antigo antes de inserir um novo
     if total_registros >= 3:
         cursor.execute("""
             DELETE FROM tf_cadastro_regras_negocio 
@@ -78,78 +103,120 @@ def salvar_dados_iniciativa(id_iniciativa, usuario, objetivo_geral, objetivos_es
             )
         """, (id_iniciativa,))
 
-    # Convertendo os dados para JSON
-    objetivos_json = json.dumps(objetivos_especificos)
-    eixos_json = json.dumps(eixos_tematicos)
-    acoes_json = json.dumps(acoes_manejo)
-    insumos_json = json.dumps(insumos)
+    # 2. Converte listas/dicionários para JSON (para as colunas específicas)
+    objetivos_json = json.dumps(objetivos_especificos)  # ex.: ["obj1", "obj2"]
+    eixos_json = json.dumps(eixos_tematicos)            # ex.: [{"id_eixo":..., "acoes_manejo":...}, ...]
 
-    # Inserindo novo registro
+    # 3. Extrair lista geral de acoes e insumos, se quiser gravar em colunas específicas
+    acoes_set = set()
+    insumos_set = set()
+
+    # eixos_tematicos: 
+    #   [ 
+    #     {
+    #       "id_eixo": ...,
+    #       "nome_eixo": "...",
+    #       "acoes_manejo": {
+    #          <id_acao>: {
+    #             "insumos": [ ... ],
+    #             "valor_ucs": { ... }
+    #          },
+    #          ...
+    #       }
+    #     },
+    #     ...
+    #   ]
+    for eixo in eixos_tematicos:
+        acoes_manejo_dict = eixo.get("acoes_manejo", {})
+        for ac_id, ac_data in acoes_manejo_dict.items():
+            acoes_set.add(ac_id)
+            for ins_id in ac_data.get("insumos", []):
+                insumos_set.add(ins_id)
+
+    # Passa para lista, caso precise
+    acoes_list = list(acoes_set)
+    insumos_list = list(insumos_set)
+
+    acoes_json = json.dumps(acoes_list)    # exemplo: ["ac_1", "ac_2"]
+    insumos_json = json.dumps(insumos_list) # exemplo: ["ins_1", "ins_2"]
+
+    # 4. Montar o dicionário final da “regra” (tudo que o usuário configurou)
+    final_rule = {
+        "objetivo_geral": objetivo_geral,
+        "objetivos_especificos": objetivos_especificos,
+        "eixos_tematicos": eixos_tematicos,
+        "acoes": acoes_list,
+        "insumos": insumos_list
+    }
+    regra_json = json.dumps(final_rule)
+
+    # 5. Inserir no banco
     cursor.execute("""
         INSERT INTO tf_cadastro_regras_negocio 
-        (id_iniciativa, usuario, objetivo_geral, objetivo_especifico, eixos_tematicos, acoes_manejo, insumos)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (id_iniciativa, usuario, objetivo_geral, objetivos_json, eixos_json, acoes_json, insumos_json))
+        (
+          id_iniciativa, 
+          usuario, 
+          objetivo_geral, 
+          objetivo_especifico, 
+          eixos_tematicos,
+          acoes_manejo,
+          insumos,
+          regra
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        id_iniciativa,                # id_iniciativa
+        usuario,                      # usuario
+        objetivo_geral,              # objetivo_geral
+        objetivos_json,              # objetivo_especifico
+        eixos_json,                  # eixos_tematicos
+        acoes_json,                  # acoes_manejo
+        insumos_json,                # insumos
+        regra_json                   # regra (tudo consolidado)
+    ))
 
     conn.commit()
     conn.close()
 
+@st.cache_data
+def get_options_from_table(table_name, id_col, name_col, filter_col=None, filter_val=None):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
 
-# 📌 Inicializa variáveis no session_state se ainda não existirem
-if "edit_objetivo" not in st.session_state:
-    st.session_state["edit_objetivo"] = None
+    query = f"SELECT {id_col}, {name_col} FROM {table_name}"
+    params = ()
+    if filter_col and filter_val is not None:
+        query += f" WHERE {filter_col} = ?"
+        params = (str(filter_val),)
 
-# 📌 Seleção da Iniciativa
+    cursor.execute(query, params)
+    results = cursor.fetchall()
+    conn.close()
+
+    return {str(row[0]): row[1] for row in results}
+
+# =============================================================================
+#                               INÍCIO DA PÁGINA
+# =============================================================================
 st.header("📝 Cadastro de Regras de Negócio")
-
-st.divider()
 
 perfil = st.session_state["perfil"]
 setor = st.session_state["setor"]
-
-
-st.subheader("Iniciativas Estruturantes", help="Iniciativas disponíveis para o usuário: filtro pelo setor demandante cadastrado com o perfil")
-
-# 🔍 Obtendo as iniciativas disponíveis para o usuário
-iniciativas = get_iniciativas_usuario(perfil, setor)
-
-if iniciativas.empty:
-    st.warning("🚫 Nenhuma iniciativa disponível para você.")
-    st.stop()
-
-
-
-nova_iniciativa = st.selectbox(
-    "Selecione a Iniciativa:",
-    options=iniciativas["id_iniciativa"],
-    format_func=lambda x: iniciativas.set_index("id_iniciativa").loc[x, "nome_iniciativa"]
-)
-
-# 📌 Se o usuário mudar de iniciativa, reinicializar os dados armazenados na sessão
-if "id_iniciativa_atual" not in st.session_state or st.session_state["id_iniciativa_atual"] != nova_iniciativa:
-    st.session_state["id_iniciativa_atual"] = nova_iniciativa
-    st.session_state["objetivos_especificos"] = []  # 🔥 Resetando os objetivos específicos
-
-
+cpf_usuario = st.session_state["cpf"]
 
 st.divider()
+st.caption("Resumo Executivo de Iniciativas", help="ref.: documentos SEI")
 
-st.caption("Resumo Executivo da Iniciativa", help="ref.: documentos SEI")
-
-# 📌 Função para tratar valores nulos do banco
+# ---------- Exibe resumo da(s) iniciativa(s) do SETOR -------------
 def tratar_valor(valor):
-    """ Substitui valores None ou 'NULL' por 'Sem Informação' """
     if pd.isna(valor) or valor is None or str(valor).strip().lower() == "null":
         return "(sem informação)"
     return str(valor).strip()
 
-# 🔍 Carregar o resumo da iniciativa baseado no setor demandante
 resumos = carregar_resumo_iniciativa(setor)
-
 if resumos is not None:
     for _, resumo in resumos.iterrows():
         nome_iniciativa = tratar_valor(resumo.get("iniciativa", "Iniciativa Desconhecida"))
-
         with st.expander(f"📖 {nome_iniciativa}", expanded=False):
             st.divider()
             st.write(f"**🎯 Objetivo Geral:** {tratar_valor(resumo.get('objetivo_geral'))}")
@@ -167,234 +234,283 @@ if resumos is not None:
             st.divider()
             st.write(f"**🔬 Metodologia:** {tratar_valor(resumo.get('metodologia'))}")
 
-
-
 st.divider()
 
-# 📌 Carregar dados da iniciativa selecionada
-dados_iniciativa = carregar_dados_iniciativa(nova_iniciativa)
+# ---------- Seleciona Iniciativa que será detalhada -------------
+iniciativas = get_iniciativas_usuario(perfil, setor)
+if iniciativas.empty:
+    st.warning("🚫 Nenhuma iniciativa disponível para você.")
+    st.stop()
 
-
-# 📌 Verificação e acesso aos dados corretamente
-objetivo_geral = dados_iniciativa.get("objetivo_geral", "Sem Informação") if dados_iniciativa is not None else "Sem Informação"
-
-# 📌 Campo de entrada do Objetivo Geral
-st.subheader("🎯 Objetivo Geral", help="Declaração ampla e inspiradora do propósito macro a ser alcançado no longo prazo.")
-objetivo_geral = st.text_area(
-    "Descreva o Objetivo Geral da Iniciativa:",
-    value=objetivo_geral,
-    height=140,
-    placeholder="Propósito macro a ser alcançado no longo prazo."
+nova_iniciativa = st.selectbox(
+    "Selecione a Iniciativa:",
+    options=iniciativas["id_iniciativa"],
+    format_func=lambda x: iniciativas.set_index("id_iniciativa").loc[x, "nome_iniciativa"],
+    key="sel_iniciativa"
 )
 
+if "id_iniciativa_atual" not in st.session_state or st.session_state["id_iniciativa_atual"] != nova_iniciativa:
+    st.session_state.update({
+        "id_iniciativa_atual": nova_iniciativa,
+        "carregou_iniciativa": None,
+        "objetivo_geral": "",
+        "objetivos_especificos": [],
+        "eixos_tematicos": []
+    })
 
-##########################################################################################
+dados_iniciativa = carregar_dados_iniciativa(nova_iniciativa)
+if dados_iniciativa is not None and st.session_state["carregou_iniciativa"] != nova_iniciativa:
+    st.session_state.update({
+        "carregou_iniciativa": nova_iniciativa,
+        "objetivo_geral": dados_iniciativa.get("objetivo_geral", ""),
+        "objetivos_especificos": json.loads(dados_iniciativa.get("objetivo_especifico", "[]")),
+        "eixos_tematicos": json.loads(dados_iniciativa.get("eixos_tematicos", "[]"))
+    })
 
+# --------------- SEÇÃO: OBJETIVO GERAL  ---------------
+st.subheader("🎯 Objetivo Geral")
+st.session_state["objetivo_geral"] = st.text_area(
+    "Descreva o Objetivo Geral:",
+    value=st.session_state["objetivo_geral"],
+    height=100,
+    key="txt_objetivo_geral"
+)
 
+# --------------- SEÇÃO: OBJETIVOS ESPECÍFICOS  ---------------
+st.subheader("🎯 Objetivos Específicos (tabela editável)")
+
+obj_df = pd.DataFrame({
+    "Objetivo Específico": st.session_state["objetivos_especificos"]
+}, dtype=str) 
+
+edited_df = st.data_editor(
+    obj_df,
+    num_rows="dynamic",
+    use_container_width=True,
+    column_config={
+        "Objetivo Específico": st.column_config.TextColumn(
+            "Descrição do Objetivo",
+            help="Digite cada objetivo específico",
+            default="",
+            max_chars=500
+        )
+    },
+    key="data_editor_objetivos"
+)
+
+st.session_state["objetivos_especificos"] = edited_df["Objetivo Específico"].dropna().tolist()
 st.divider()
 
-# 📌 Objetivos Específicos
-st.subheader("🎯 Objetivos Específicos", help="Objetivos específicos são resultados concretos e mensuráveis que contribuem diretamente para o Objetivo Geral.")
+# --------------- SEÇÃO: EIXOS TEMÁTICOS ---------------
+st.subheader("🗂️ Eixos Temáticos")
 
-if "objetivos_especificos" not in st.session_state or not st.session_state["objetivos_especificos"]:
-    if dados_iniciativa is not None and not dados_iniciativa.empty:
-        st.session_state["objetivos_especificos"] = json.loads(dados_iniciativa.get("objetivo_especifico", "[]"))
-    else:
-        st.session_state["objetivos_especificos"] = []
-
-
-
-
-def get_options_from_table(table_name, id_col, name_col, filter_col=None, filter_val=None):
-    """Busca os valores de uma tabela e retorna um dicionário {id: nome}.
-       Se filter_col e filter_val forem fornecidos, filtra os resultados.
-    """
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    query = f"SELECT {id_col}, {name_col} FROM {table_name}"
-    params = ()
-    if filter_col and filter_val:
-        query += f" WHERE {filter_col} = ?"
-        params = (filter_val,)
-
-    cursor.execute(query, params)
-    results = cursor.fetchall()
-    conn.close()
-    return {row[0]: row[1] for row in results}
-
-# 📌 Carregar opções do banco de dados com os nomes corretos
+# Carrega opções do SAMGe
 eixos_opcoes = get_options_from_table("td_samge_processos", "id_p", "nome")
-insumos_opcoes = get_options_from_table("td_insumos", "id", "elemento_despesa")
 
+@st.cache_data
+def calcular_estatisticas_eixo(eixo):
+    total_acoes = len(eixo.get("acoes_manejo", {}))
+    total_insumos = sum(len(ac.get("insumos", [])) for ac in eixo.get("acoes_manejo", {}).values())
+    total_valor = sum(sum(uc.values()) for uc in eixo.get("valor_ucs", {}).values())
+    return {"acoes": total_acoes, "insumos": total_insumos, "valor_total": total_valor}
 
-# 📌 Modal de edição de objetivo específico
-@st.dialog("📝 Editar Objetivo Específico", width="large")
-def editar_objetivo_especifico(index):
-    """Modal para editar um objetivo específico e seus relacionamentos"""
+@st.dialog("Edição do Eixo Temático", width="large")
+def editar_eixo_dialog(index_eixo):
+    if index_eixo < 0 or index_eixo >= len(st.session_state["eixos_tematicos"]):
+        st.error("Eixo Temático não encontrado.")
+        return
 
-    if "detalhamento_objetivos" not in st.session_state:
-        st.session_state["detalhamento_objetivos"] = {}
+    eixo = st.session_state["eixos_tematicos"][index_eixo]
+    st.subheader(f"Editando: {eixo.get('nome_eixo','(sem nome)')}")
 
-    # 📌 Garante que cada objetivo tenha um ID único
-    if "objetivos_ids" not in st.session_state:
-        st.session_state["objetivos_ids"] = {}
+    # --------------------------------------------------
+    # Passo 1: Selecionar Ações
+    # --------------------------------------------------
 
-    if index not in st.session_state["objetivos_ids"]:
-        st.session_state["objetivos_ids"][index] = index + 1  # Gera um ID sequencial
+    # Formulário para escolher as ações
+    with st.form(f"form_acoes_{index_eixo}", clear_on_submit=False):
+        st.write("**Selecione as ações de manejo associadas ao Eixo.**")
 
-    id_objetivo = st.session_state["objetivos_ids"][index]
-    objetivo = st.session_state["objetivos_especificos"][index]
-
-    edit_mode = st.toggle("✏️ Editar Objetivo", key=f"toggle_edit_{index}")
-
-    objetivo_editado = st.text_area(
-        "Objetivo Específico:",
-        value=objetivo,
-        height=70,
-        disabled=not edit_mode
-    )
-
-    if edit_mode and objetivo_editado != objetivo:
-        st.session_state["objetivos_especificos"][index] = objetivo_editado
-
-    st.divider()
-
-    # 📌 Seção: Eixos Temáticos
-    with st.expander("📂 Eixos Temáticos", expanded=True):
-        if "eixos_tematicos" not in st.session_state:
-            st.session_state["eixos_tematicos"] = {}
-
-        eixos_selecionados = st.multiselect(
-            "Selecione os Eixos Temáticos:",
-            options=list(eixos_opcoes.keys()),
-            format_func=lambda x: eixos_opcoes[x],
-            key=f"eixos_{id_objetivo}"
+        acoes_opcoes = get_options_from_table(
+            "td_samge_acoes_manejo",
+            "id_ac",
+            "nome",
+            filter_col="processo_id",
+            filter_val=eixo["id_eixo"]
         )
 
-        if eixos_selecionados:
-            st.session_state["eixos_tematicos"][id_objetivo] = {
-                "eixos": eixos_selecionados,
-                "acoes_manejo": {}
-            }
+        acoes_df = pd.DataFrame([
+            {
+                "ID": ac_id,
+                "Ação": nome,
+                "Selecionada": ac_id in eixo["acoes_manejo"]
+            } for ac_id, nome in acoes_opcoes.items()
+        ])
 
-    # 📌 Seção: Ações de Manejo (Filtradas pelo Eixo Temático)
-    with st.expander("⚙️ Ações de Manejo", expanded=False):
-        if id_objetivo in st.session_state["eixos_tematicos"]:
-            eixos_selecionados = st.session_state["eixos_tematicos"][id_objetivo]["eixos"]
-            eixo_acao_map = {}
-
-            for eixo_id in eixos_selecionados:
-                # 📌 Busca as ações de manejo associadas ao processo/eixo temático selecionado
-                acoes_opcoes = get_options_from_table("td_samge_acoes_manejo", "id_ac", "nome", "processo_id", eixo_id)
-
-                acoes_selecionadas = st.multiselect(
-                    f"📌 Ações de Manejo para **{eixos_opcoes[eixo_id]}**:",
-                    options=list(acoes_opcoes.keys()),
-                    format_func=lambda x: acoes_opcoes[x],
-                    key=f"acoes_{id_objetivo}_{eixo_id}"
+        edited_acoes = st.data_editor(
+            acoes_df,
+            column_config={
+                "ID": st.column_config.TextColumn(disabled=True),
+                "Ação": st.column_config.TextColumn(disabled=True),
+                "Selecionada": st.column_config.CheckboxColumn(
+                    "Selecionar",
+                    help="Marque para incluir esta ação"
                 )
-                
-                if acoes_selecionadas:
-                    eixo_acao_map[eixo_id] = acoes_selecionadas
+            },
+            hide_index=True,
+            use_container_width=True,
+            key=f"editor_acoes_{index_eixo}"
+        )
 
-            if eixo_acao_map:
-                st.session_state["eixos_tematicos"][id_objetivo]["acoes_manejo"] = eixo_acao_map
+        # Processa o submit do formulário de ações
+        submit_acoes = st.form_submit_button("Selecionar Ações")
+        if submit_acoes:
+            # Atualiza lista de ações selecionadas no session_state
+            novas_acoes = edited_acoes[edited_acoes["Selecionada"]]["ID"].tolist()
+            st.session_state[f"acoes_selecionadas_{index_eixo}"] = novas_acoes
 
+            # Elimina do dicionário as ações que não foram selecionadas
+            for ac_id_salvo in list(eixo["acoes_manejo"].keys()):
+                if ac_id_salvo not in novas_acoes:
+                    del eixo["acoes_manejo"][ac_id_salvo]
 
-    # 📌 Seção: Insumos
-        with st.expander("📦 Insumos", expanded=False):
-            insumo_map = {}
-            for eixo in dados_objetivo.get("eixos_tematicos", []):
-                eixo_id = eixo["id_eixo"]
+            # Garante que as novas ações existam no dicionário
+            for ac_id in novas_acoes:
+                if ac_id not in eixo["acoes_manejo"]:
+                    eixo["acoes_manejo"][ac_id] = {"insumos": [], "valor_ucs": {}}
 
-                for acao in eixo.get("acoes_manejo", []):
-                    acao_id = acao["id_acao"]
+            st.session_state["eixos_tematicos"][index_eixo] = eixo
+            st.rerun()
 
-                    # 🔥 Verifica se a chave acao_id existe no dicionário antes de acessá-la
-                    nome_acao = acoes_opcoes.get(acao_id, "Ação Não Encontrada")
-                    nome_eixo = eixos_opcoes.get(eixo_id, "Eixo Não Encontrado")
+    # --------------------------------------------------
+    # Passo 2: Selecionar Insumos para cada Ação
+    # --------------------------------------------------
+    novas_acoes = st.session_state.get(f"acoes_selecionadas_{index_eixo}", [])
+    if novas_acoes:
+        # Filtros extras para insumos
+        # Exemplo simples: Selecionar elemento_despesa e especificacao_padrao
+        # (Você pode adaptar para multiselect ou text_input conforme a necessidade)
+        with st.expander("🔍 Filtros de Insumos", expanded=True):
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                elemento_despesa = st.text_input("Filtrar por elemento de despesa:", "")
+            with col_f2:
+                especificacao = st.text_input("Filtrar por especificação padrão:", "")
 
-                    insumos_selecionados = st.multiselect(
-                        f"📌 Insumos para {nome_acao} ({nome_eixo}):",
-                        options=list(insumos_opcoes.keys()),
-                        format_func=lambda x: insumos_opcoes[x],
-                        default=acao.get("insumos", []),
-                        key=f"insumos_{id_objetivo}_{eixo_id}_{acao_id}"
-                    )
+        # Carrega insumos
+        # Ajustar a query ou a função get_options_from_table para retornar colunas adicionais
+        # Caso precise de colunas extra no DF, você pode criar outra função ou manipular o DF após ler do BD.
+        # Aqui, assumiremos que get_options_from_table retorna um dicionário {id: descricao_insumo}.
+        # Se precisar buscar mais colunas, crie uma função que retorne um DataFrame completo.
+        with st.form(f"form_insumos_{index_eixo}", clear_on_submit=False):
+            st.write("**Selecione os insumos para cada ação**")
 
-                    acao["insumos"] = insumos_selecionados
+            insumos_opcoes = get_options_from_table("td_insumos", "id", "descricao_insumo")
 
+            # Filtragem simples (você pode substituir por um DataFrame real)
+            if elemento_despesa:
+                # Exemplo: filtra chaves que contenham o texto (apenas ilustrativo)
+                insumos_opcoes = {k: v for k,v in insumos_opcoes.items() if elemento_despesa.lower() in v.lower()}
+            if especificacao:
+                insumos_opcoes = {k: v for k,v in insumos_opcoes.items() if especificacao.lower() in v.lower()}
 
-            if insumo_map:
-                st.session_state["eixos_tematicos"][id_objetivo]["insumos"] = insumo_map
+            # Exibe data_editors para cada ação
+            for ac_id in novas_acoes:
+                st.markdown(f"### Ação: {acoes_opcoes.get(ac_id, 'Desconhecida')}")
+                ac_data = eixo["acoes_manejo"].get(ac_id, {"insumos": [], "valor_ucs": {}})
 
-    st.divider()
+                insumos_df = pd.DataFrame([
+                    {
+                        "ID": ins_id,
+                        "Insumo": desc,
+                        "Selecionado": ins_id in ac_data["insumos"]
+                    } for ins_id, desc in insumos_opcoes.items()
+                ])
 
-    # 📌 Botões de ação no modal
-    col1, col2 = st.columns(2)
-    salvar = col1.button("💾 Salvar Alteração", key=f"salvar_obj_{index}")
-    cancelar = col2.button("❌ Cancelar", key=f"cancelar_obj_{index}")
+                edited_insumos = st.data_editor(
+                    insumos_df,
+                    column_config={
+                        "ID": st.column_config.TextColumn(disabled=True),
+                        "Insumo": st.column_config.TextColumn(disabled=True),
+                        "Selecionado": st.column_config.CheckboxColumn("Selecionar")
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    key=f"editor_insumos_{ac_id}"
+                )
 
-    if salvar:
-        st.session_state["objetivos_especificos"][index] = objetivo_editado
-        st.rerun()
+                # Atualiza insumos de cada ação
+                ac_data["insumos"] = edited_insumos[edited_insumos["Selecionado"]]["ID"].tolist()
+                eixo["acoes_manejo"][ac_id] = ac_data
 
-    if cancelar:
-        st.rerun()
-
-
-
-# 📌 Campo para adicionar novos objetivos específicos
-novo_objetivo = st.text_area("Novo Objetivo Específico", height=70, placeholder="Resultados concretos e mensuráveis que contribuem diretamente para o Objetivo Geral.")
-
-if st.button("➕ Adicionar Objetivo Específico"):
-    if novo_objetivo:
-        st.session_state["objetivos_especificos"].append(novo_objetivo)
-        st.rerun()
-
-# 📌 Expanders para exibir objetivos específicos com numeração e botão de exclusão
-for i, objetivo in enumerate(st.session_state["objetivos_especificos"]):
-    with st.expander(f"🎯 Obj. Específico {i + 1}: {objetivo}", expanded=False):
-        # 📌 Criando três colunas: uma grande (para espaçamento) e uma pequena para os botões
-        col_space, col_buttons = st.columns([10, 1])
-        
-        with col_space:
-            # 📊 Estatísticas associadas ao objetivo (exemplo fictício)
-            num_ucs = 5  # 🔥 Buscar do BD
-            num_eixos = 3  # 🔥 Buscar do BD
-            num_acoes = 8  # 🔥 Buscar do BD
-            num_insumos = 12  # 🔥 Buscar do BD
-
-            st.markdown(f"""
-            **📍 Unidades de Conservação Associadas:** {num_ucs}  
-            **🗂️ Eixos Temáticos:** {num_eixos}  
-            **⚙️ Ações de Manejo Vinculadas:** {num_acoes}  
-            **📦 Insumos Relacionados:** {num_insumos}  
-            """)
-
-        
-
-        # Botões alinhados à direita dentro da coluna pequena
-        with col_buttons:
-            if st.button("📝", key=f"edit-{i}", use_container_width=True):
-                editar_objetivo_especifico(i)
-
-            if st.button("❌", key=f"remove-{i}", use_container_width=True):
-                del st.session_state["objetivos_especificos"][i]
+            # Botão para salvar
+            submit_insumos = st.form_submit_button("Salvar Insumos")
+            if submit_insumos:
+                # Salva tudo no session state
+                st.session_state["eixos_tematicos"][index_eixo] = eixo
+                st.success("Insumos atualizados!")
                 st.rerun()
 
-st.divider()
+    # --------------------------------------------------
+    # Por fim, pode haver um botão geral para encerrar
+    # --------------------------------------------------
+    if st.button("Fechar e Voltar", key=f"btn_fechar_{index_eixo}"):
+        st.session_state.modal_fechado = True
+        st.rerun()
 
-# 📌 Botão de salvar
-if st.button("💾 Salvar Cadastro"):
+
+
+# Main UI para Eixos
+col_sel_eixo, col_btn_eixo = st.columns([0.8, 0.2])
+with col_sel_eixo:
+    novo_eixo_id = st.selectbox(
+        "Escolha um Eixo (Processo SAMGe) para adicionar:",
+        options=[None] + sorted(eixos_opcoes.keys(), key=lambda x: eixos_opcoes[x]),
+        format_func=lambda x: eixos_opcoes.get(x, "Selecione..."),
+        key="sel_novo_eixo"
+    )
+with col_sel_eixo:
+    if st.button("➕ Adicionar Eixo Temático", key="btn_add_eixo"):
+        if novo_eixo_id and novo_eixo_id not in [e["id_eixo"] for e in st.session_state["eixos_tematicos"]]:
+            st.session_state["eixos_tematicos"].append({
+                "id_eixo": novo_eixo_id,
+                "nome_eixo": eixos_opcoes.get(novo_eixo_id, "Novo Eixo"),
+                "acoes_manejo": {},
+                "valor_ucs": {}
+            })
+            st.rerun()
+
+for i, eixo in enumerate(st.session_state["eixos_tematicos"]):
+    stats = calcular_estatisticas_eixo(eixo)
+    with st.expander(f"📌 Eixo: {eixo['nome_eixo']}", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Ações", stats["acoes"])
+        col2.metric("Insumos", stats["insumos"])
+        col3.metric("Valor Total", f"R$ {stats['valor_total']:,.2f}")
+        
+        col_edit, col_del = st.columns(2)
+        if col_edit.button("✏️ Editar", key=f"btn_edit_{i}"):
+            st.session_state["modo_editar_eixo"] = i
+            st.session_state.modal_fechado = False
+            st.rerun()
+        
+        if col_del.button("🗑️ Excluir", key=f"btn_del_{i}"):
+            del st.session_state["eixos_tematicos"][i]
+            st.rerun()
+
+if "modo_editar_eixo" in st.session_state and not st.session_state.get("modal_fechado", True):
+    editar_eixo_dialog(st.session_state["modo_editar_eixo"])
+    st.stop()
+
+st.divider()
+if st.button("💾 Salvar Cadastro", key="btn_salvar_geral"):
     salvar_dados_iniciativa(
-        nova_iniciativa,
-        st.session_state["cpf"],
-        objetivo_geral,
-        st.session_state["objetivos_especificos"],
-        [],  # Eixos Temáticos (placeholder)
-        [],  # Ações de Manejo (placeholder)
-        []   # Insumos (placeholder)
+        id_iniciativa=nova_iniciativa,
+        usuario=cpf_usuario,
+        objetivo_geral=st.session_state["objetivo_geral"],
+        objetivos_especificos=st.session_state["objetivos_especificos"],
+        eixos_tematicos=st.session_state["eixos_tematicos"]
     )
     st.success("✅ Cadastro atualizado com sucesso!")
+    st.session_state["modo_editar_eixo"] = None
+    st.rerun()

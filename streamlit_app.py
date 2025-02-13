@@ -114,7 +114,7 @@ if cpf_input:
                 st.session_state["editar_setor"] = False
 
             # Toggle para edição
-            st.session_state["editar_setor"] = st.toggle("Modo Edição", value=st.session_state["editar_setor"])
+            st.session_state["editar_setor"] = st.toggle("Editar Setor", value=st.session_state["editar_setor"])
 
             if st.session_state["editar_setor"]:
                 novo_setor = st.selectbox("Selecione o novo setor", lista_setores, index=lista_setores.index(setor_demandante) if setor_demandante in lista_setores else 0)

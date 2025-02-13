@@ -149,6 +149,7 @@ def init_database():
     """)
 
     # 📌 Criando a tabela `tf_cadastro_regras_negocio`
+    cursor.execute(""" DROP TABLE IF EXISTS tf_cadastro_regras_negocio """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tf_cadastro_regras_negocio (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -160,6 +161,7 @@ def init_database():
             eixos_tematicos TEXT NOT NULL, -- JSON contendo os eixos temáticos por objetivo específico
             acoes_manejo TEXT NOT NULL, -- JSON contendo as ações de manejo associadas a cada eixo temático
             insumos TEXT NOT NULL, -- JSON contendo os insumos vinculados às ações de manejo
+            regra TEXT NOT NULL,               -- JSON consolidado de todos os dados configurados
             FOREIGN KEY (id_iniciativa) REFERENCES td_iniciativas(id_iniciativa)
         )
     """)
@@ -169,10 +171,10 @@ def init_database():
         CREATE TABLE IF NOT EXISTS td_insumos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             elemento_despesa TEXT NOT NULL,
-            especificacao_padrao TEXT NOT NULL,
-            descricao_insumo TEXT NOT NULL,
-            especificacao_tecnica TEXT NOT NULL,
-            preco_referencia REAL NOT NULL,
+            especificacao_padrao TEXT,
+            descricao_insumo TEXT,
+            especificacao_tecnica TEXT,
+            preco_referencia REAL,
             data_atualizacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -214,6 +216,60 @@ def init_database():
     df_base["id_acao"] = df_base["AÇÃO DE APLICAÇÃO"].map(id_maps["td_acoes_aplicacao"]).fillna(-1)
 
     df_base.to_sql("tf_cadastros_iniciativas", conn, if_exists="replace", index=False)
+
+
+    # ---------------------------------------------------------------------
+    # >>>       Inserindo insumos a partir do Excel base_insumos.xlsx    <<<
+    # ---------------------------------------------------------------------
+    try:
+        # 1) Lê o Excel com a base de insumos.
+        #    Ajuste o sheet_name caso não seja a primeira planilha.
+        df_raw = pd.read_excel("dados/base_insumos.xlsx", sheet_name=0)
+
+        # 2) Renomeia as colunas para bater com as do banco
+        #    Ajuste aqui para os nomes EXATOS que seu Excel tem.
+
+        # Garante que exista "Especificação Técnica (detalhamento)" mesmo que vazia
+        if "Especificação Técnica (detalhamento)" not in df_raw.columns:
+            df_raw["Especificação Técnica (detalhamento)"] = "" 
+
+        df_insumos = df_raw.rename(
+            columns={
+                "Elemento de Despesa": "elemento_despesa",
+                "Especificação Padrão": "especificacao_padrao",
+                "Descrição do Insumo": "descricao_insumo",
+                "Especificação Técnica (detalhamento)": "especificacao_tecnica",
+                "Valor ATUALIZADO EM Dezembro/2024": "valor_referencia"
+            }
+        )
+
+        # 3) Converter valores numéricos (com vírgula) para float
+        df_insumos["valor_referencia"] = (
+            df_insumos["valor_referencia"]
+            .astype(str)
+            .str.replace(".", "")    # se seu Excel usa separador de milhar com ponto
+            .str.replace(",", ".")   # substitui vírgula decimal por ponto
+        )
+        df_insumos["valor_referencia"] = pd.to_numeric(df_insumos["valor_referencia"], errors="coerce").fillna(0.0)
+
+        # 4) Seleciona as colunas na ordem correta
+        df_insumos = df_insumos[[
+            "elemento_despesa",
+            "especificacao_padrao",
+            "descricao_insumo",
+            "especificacao_tecnica",
+            "valor_referencia"
+        ]]
+        # Renomeia "valor_referencia" -> "preco_referencia" (coluna do banco)
+        df_insumos.rename(columns={"valor_referencia": "preco_referencia"}, inplace=True)
+
+        # 5) Insere no banco (método "append" para não sobrescrever a tabela)
+        df_insumos.to_sql("td_insumos", conn, if_exists="append", index=False)
+        print("✅ Tabela td_insumos populada com sucesso a partir do Excel!")
+    except Exception as e:
+        print("❌ Erro ao tentar popular td_insumos:", e)
+    # ---------------------------------------------------------------------
+
 
     conn.close()
     print("✅ Banco de dados inicializado com sucesso!")
