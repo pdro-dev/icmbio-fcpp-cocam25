@@ -377,7 +377,8 @@ if "carregou_iniciativa" not in st.session_state or st.session_state["carregou_i
 # Menu lateral
 # st.sidebar.title("Menu")
 # st.write("Exibir informações adicionais")
-# exibir_info_lateral(nova_iniciativa)
+if st.sidebar.checkbox("Exibir informações da iniciativa", value=False):
+    exibir_info_lateral(nova_iniciativa)
 
 
 # --------------- SEÇÃO: OBJETIVO GERAL  ---------------
