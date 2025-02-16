@@ -169,6 +169,7 @@ def init_database():
     """)
 
     # 📌 Criando a tabela `td_insumos` 
+    cursor.execute(""" DROP TABLE IF EXISTS td_insumos """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS td_insumos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

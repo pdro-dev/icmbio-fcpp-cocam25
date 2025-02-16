@@ -47,7 +47,39 @@ if True:
 # 📌 Área de Testes para Variáveis e Componentes
 st.header("🛠 Testes de Variáveis & Componentes")
 
+nova_iniciativa = st.session_state["id_iniciativa_atual"] if "id_iniciativa_atual" in st.session_state else 0
 
+conn = sqlite3.connect(db_path)
+
+# Execute a query e armazene o cursor
+cursor = conn.execute("""
+    SELECT objetivo_geral
+    FROM td_dados_resumos_sei
+    WHERE id_resumo = ?
+    LIMIT 1
+""", (nova_iniciativa,))
+
+# Pega a primeira linha do resultado
+row_resumo = cursor.fetchone()
+
+conn.close()
+
+st.write("DEBUG row_resumo:", row_resumo)
+
+
+#consultar tabela de resumos para pegar o objetivo geral da iniciativa selecionada
+conn = sqlite3.connect(db_path)
+cursor = conn.execute("""
+    SELECT id_resumo, objetivo_geral
+    FROM td_dados_resumos_sei
+    WHERE id_resumo = ?
+    LIMIT 1
+""", (nova_iniciativa,))
+row_resumo = cursor.fetchone()
+conn.close()
+
+st.write("DEBUG row_resumo:", row_resumo)
+st.write("DEBUG nova_iniciativa:", nova_iniciativa)
 
 
 

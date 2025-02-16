@@ -2,6 +2,7 @@ import streamlit as st
 import sqlite3
 import json
 import pandas as pd
+import time as time
 
 # Verifica login
 if "usuario_logado" not in st.session_state or not st.session_state["usuario_logado"]:
@@ -288,15 +289,15 @@ def exibir_info_lateral(id_iniciativa: int):
 
 
     
-    st.divider()
-    if st.sidebar.button("🔄 Recarregar informações do banco de dados"):
-    # Pressionando este botão, você recarrega a iniciativa selecionada
-    # Necessita saber qual iniciativa está selecionada (nova_iniciativa)
-        if "id_iniciativa_atual" in st.session_state:
-            reload_iniciativa(st.session_state["id_iniciativa_atual"])
-            st.rerun()
-        else:
-            st.sidebar.warning("Selecione uma iniciativa primeiro.")
+    # st.divider()
+    # if st.sidebar.button("🔄 Recarregar informações do banco de dados"):
+    # # Pressionando este botão, você recarrega a iniciativa selecionada
+    # # Necessita saber qual iniciativa está selecionada (nova_iniciativa)
+    #     if "id_iniciativa_atual" in st.session_state:
+    #         reload_iniciativa(st.session_state["id_iniciativa_atual"])
+    #         st.rerun()
+    #     else:
+    #         st.sidebar.warning("Selecione uma iniciativa primeiro.")
 
 
 
@@ -357,6 +358,11 @@ nova_iniciativa = st.selectbox(
     key="sel_iniciativa"
 )
 
+# # escrever id_iniciativa_atual no session_state
+# st.session_state["id_iniciativa_atual"] = nova_iniciativa
+# # obter no núm. do id da iniciativa atual
+# st.write(nova_iniciativa)
+
 # Carregar dados do banco APENAS se o usuário ainda não tiver alterado algo no session_state
 if "carregou_iniciativa" not in st.session_state or st.session_state["carregou_iniciativa"] != nova_iniciativa:
     dados_iniciativa = carregar_dados_iniciativa(nova_iniciativa)
@@ -366,20 +372,39 @@ if "carregou_iniciativa" not in st.session_state or st.session_state["carregou_i
         st.session_state["objetivos_especificos"] = json.loads(dados_iniciativa["objetivo_especifico"])
         st.session_state["eixos_tematicos"] = json.loads(dados_iniciativa["eixos_tematicos"])
     else:
+        # Se não há nada em tf_cadastro_regras_negocio, iniciamos vazio
         st.session_state["objetivo_geral"] = ""
         st.session_state["objetivos_especificos"] = []
         st.session_state["eixos_tematicos"] = []
 
+
+    # Se mesmo após carregar do tf_cadastro_regras_negocio ainda estiver vazio,
+    # tentamos buscar do td_dados_resumos_sei como "sugestão".
+    if not st.session_state["objetivo_geral"]:
+        conn = sqlite3.connect(DB_PATH)
+        # Busca a linha em td_dados_resumos_sei correspondente a esta iniciativa
+        row_resumo = conn.execute("""
+        SELECT objetivo_geral
+        FROM td_dados_resumos_sei
+        WHERE id_resumo = ?
+        LIMIT 1
+    """, (nova_iniciativa,)).fetchone()
+    conn.close()
+
+    if row_resumo:
+        # Como só selecionou 1 coluna, row_resumo é algo como ("texto do objetivo",)
+        sei_obj_geral = row_resumo[0]  # aqui deve ser índice [0]
+        if sei_obj_geral:
+            st.session_state["objetivo_geral"] = sei_obj_geral
+
     # Marca que já carregou os dados desta iniciativa, para evitar sobrescrita
     st.session_state["carregou_iniciativa"] = nova_iniciativa
 
+# Exibe o nome da iniciativa selecionada
 
 # Menu lateral
-# st.sidebar.title("Menu")
-# st.write("Exibir informações adicionais")
 if st.sidebar.checkbox("Exibir informações da iniciativa", value=False):
     exibir_info_lateral(nova_iniciativa)
-
 
 # --------------- SEÇÃO: OBJETIVO GERAL  ---------------
 st.subheader("🎯 Objetivo Geral")
@@ -389,6 +414,8 @@ st.session_state["objetivo_geral"] = st.text_area(
     height=100,
     key="txt_objetivo_geral"
 )
+
+
 
 # --------------- SEÇÃO: OBJETIVOS ESPECÍFICOS  ---------------
 st.subheader("🎯 Objetivos Específicos")
@@ -443,9 +470,12 @@ def calcular_estatisticas_eixo(eixo):
     total_valor = sum(sum(uc.values()) for uc in eixo.get("valor_ucs", {}).values())
     return {"acoes": total_acoes, "insumos": total_insumos, "valor_total": total_valor}
 
+
+
+import time
+
 @st.dialog("Edição do Eixo Temático", width="large")
 def editar_eixo_dialog(index_eixo):
-    # Em vez de exibir erro, faça apenas um check silencioso ou avise com warning:
     if not (0 <= index_eixo < len(st.session_state["eixos_tematicos"])):
         st.warning("Índice de Eixo Temático fora do intervalo.")
         return
@@ -453,14 +483,18 @@ def editar_eixo_dialog(index_eixo):
     eixo = st.session_state["eixos_tematicos"][index_eixo]
     st.subheader(f"Editando: {eixo.get('nome_eixo', '(sem nome)')}")
 
-    # --------------------------------------------------
-    # Passo 1: Selecionar Ações
-    # --------------------------------------------------
+    # Para controlar se mostra ou não o passo de insumos
+    show_insumos_key = f"show_insumos_{index_eixo}"
+    if show_insumos_key not in st.session_state:
+        st.session_state[show_insumos_key] = False
 
-    # Formulário para escolher as ações
+    #####################################################
+    # Passo 1: Selecionar Ações
+    #####################################################
     with st.form(f"form_acoes_{index_eixo}", clear_on_submit=False):
         st.write("**Selecione as ações de manejo associadas ao Eixo.**")
 
+        # 1) Monta DataFrame de Ações
         acoes_opcoes = get_options_from_table(
             "td_samge_acoes_manejo",
             "id_ac",
@@ -468,97 +502,171 @@ def editar_eixo_dialog(index_eixo):
             filter_col="processo_id",
             filter_val=eixo["id_eixo"]
         )
-
         acoes_df = pd.DataFrame([
             {
                 "ID": ac_id,
                 "Ação": nome,
-                "Selecionada": ac_id in eixo["acoes_manejo"]
-            } for ac_id, nome in acoes_opcoes.items()
+                "Selecionado": ac_id in eixo["acoes_manejo"]  # já marcadas se existiam
+            }
+            for ac_id, nome in acoes_opcoes.items()
         ])
 
+        if "Selecionado" not in acoes_df.columns:
+            acoes_df["Selecionado"] = False
+
+        # Editor para as ações
         edited_acoes = st.data_editor(
             acoes_df,
             column_config={
                 "ID": st.column_config.TextColumn(disabled=True),
                 "Ação": st.column_config.TextColumn(disabled=True),
-                "Selecionada": st.column_config.CheckboxColumn(
-                    "Selecionar",
-                    help="Marque para incluir esta ação"
-                )
+                "Selecionado": st.column_config.CheckboxColumn("Selecionar")
             },
             hide_index=True,
             use_container_width=True,
             key=f"editor_acoes_{index_eixo}"
         )
 
-        # Processa o submit do formulário de ações
+        # Botão "Avançar"
         submit_acoes = st.form_submit_button("Avançar")
         if submit_acoes:
-            # Atualiza lista de ações selecionadas no session_state
-            novas_acoes = edited_acoes[edited_acoes["Selecionada"]]["ID"].tolist()
+            if "Selecionado" in edited_acoes.columns:
+                novas_acoes = edited_acoes.loc[edited_acoes["Selecionado"], "ID"].tolist()
+            else:
+                novas_acoes = []
+
             st.session_state[f"acoes_selecionadas_{index_eixo}"] = novas_acoes
 
-            # Elimina do dicionário as ações que não foram selecionadas
+            # Remove ações que não foram selecionadas
             for ac_id_salvo in list(eixo["acoes_manejo"].keys()):
                 if ac_id_salvo not in novas_acoes:
                     del eixo["acoes_manejo"][ac_id_salvo]
 
-            # Garante que as novas ações existam no dicionário
+            # Cria as novas ações no dicionário
             for ac_id in novas_acoes:
                 if ac_id not in eixo["acoes_manejo"]:
                     eixo["acoes_manejo"][ac_id] = {"insumos": [], "valor_ucs": {}}
 
             st.session_state["eixos_tematicos"][index_eixo] = eixo
-            st.rerun()
 
-    # --------------------------------------------------
-    # Passo 2: Selecionar Insumos para cada Ação
-    # --------------------------------------------------
+            # Marca para mostrar o passo 2
+            st.session_state[show_insumos_key] = True
+
+    #####################################################
+    # Passo 2: Selecionar Insumos com Cross-Filter
+    #####################################################
     novas_acoes = st.session_state.get(f"acoes_selecionadas_{index_eixo}", [])
-    if novas_acoes:
-        # Filtros extras para insumos
-        # Exemplo simples: Selecionar elemento_despesa e especificacao_padrao
-        # (Você pode adaptar para multiselect ou text_input conforme a necessidade)
+
+    if st.session_state[show_insumos_key] and novas_acoes:
+        # Carrega TODOS os insumos
+        conn = sqlite3.connect(DB_PATH)
+        df_all_insumos = pd.read_sql_query("""
+            SELECT
+                id,
+                descricao_insumo,
+                elemento_despesa,
+                especificacao_padrao
+            FROM td_insumos
+        """, conn)
+        conn.close()
+
+        # Chaves no session_state para combos
+        elem_key = f"filtro_elemento_{index_eixo}"
+        spec_key = f"filtro_especificacao_{index_eixo}"
+
+        if elem_key not in st.session_state:
+            st.session_state[elem_key] = ""
+        if spec_key not in st.session_state:
+            st.session_state[spec_key] = ""
+
+        elemento_despesa = st.session_state[elem_key]
+        especificacao = st.session_state[spec_key]
+
+        # 1) Cross filtering combos
+        # filtra localmente p/ descobrir espec. possíveis para o elemento atual
+        df_elem_filtered = df_all_insumos
+        if elemento_despesa:
+            df_elem_filtered = df_elem_filtered[df_elem_filtered["elemento_despesa"] == elemento_despesa]
+        espec_possiveis = sorted(df_elem_filtered["especificacao_padrao"].dropna().unique())
+
+        # se a espec nao estiver mais na lista, reset
+        if especificacao and especificacao not in espec_possiveis:
+            especificacao = ""
+            st.session_state[spec_key] = ""
+
+        # filtra localmente p/ descobrir elem. possíveis p/ a espec atual
+        df_spec_filtered = df_all_insumos
+        if especificacao:
+            df_spec_filtered = df_spec_filtered[df_spec_filtered["especificacao_padrao"] == especificacao]
+        elem_possiveis = sorted(df_spec_filtered["elemento_despesa"].dropna().unique())
+
+        if elemento_despesa and elemento_despesa not in elem_possiveis:
+            elemento_despesa = ""
+            st.session_state[elem_key] = ""
+
         with st.expander("🔍 Filtros de Insumos", expanded=True):
             col_f1, col_f2 = st.columns(2)
             with col_f1:
-                elemento_despesa = st.text_input("Filtrar por elemento de despesa:", "")
+                # exibe combo de elem. despesa
+                novo_elem = st.selectbox(
+                    "Filtrar por elemento de despesa:",
+                    options=[""] + elem_possiveis,
+                    index=([""] + elem_possiveis).index(elemento_despesa)
+                )
             with col_f2:
-                especificacao = st.text_input("Filtrar por especificação padrão:", "")
+                # exibe combo de espec padrao
+                novo_spec = st.selectbox(
+                    "Filtrar por especificação padrão:",
+                    options=[""] + espec_possiveis,
+                    index=([""] + espec_possiveis).index(especificacao)
+                )
 
-        # Carrega insumos
-        # Ajustar a query ou a função get_options_from_table para retornar colunas adicionais
-        # Caso precise de colunas extra no DF, você pode criar outra função ou manipular o DF após ler do BD.
-        # Aqui, assumiremos que get_options_from_table retorna um dicionário {id: descricao_insumo}.
-        # Se precisar buscar mais colunas, crie uma função que retorne um DataFrame completo.
+        # se combos mudaram
+        if (novo_elem != elemento_despesa) or (novo_spec != especificacao):
+            st.session_state[elem_key] = novo_elem
+            st.session_state[spec_key] = novo_spec
+            st.rerun()
+
+        # 2) Define o subset final do DF p/ exibir
+        df_filter = df_all_insumos.copy()
+        if st.session_state[elem_key]:
+            df_filter = df_filter[df_filter["elemento_despesa"] == st.session_state[elem_key]]
+        if st.session_state[spec_key]:
+            df_filter = df_filter[df_filter["especificacao_padrao"] == st.session_state[spec_key]]
+
+        # 3) Formulário p/ data_editor
         with st.form(f"form_insumos_{index_eixo}", clear_on_submit=False):
             st.write("**Selecione os insumos para cada ação**")
 
-            insumos_opcoes = get_options_from_table("td_insumos", "id", "descricao_insumo")
-
-            # Filtragem simples (você pode substituir por um DataFrame real)
-            if elemento_despesa:
-                # Exemplo: filtra chaves que contenham o texto (apenas ilustrativo)
-                insumos_opcoes = {k: v for k,v in insumos_opcoes.items() if elemento_despesa.lower() in v.lower()}
-            if especificacao:
-                insumos_opcoes = {k: v for k,v in insumos_opcoes.items() if especificacao.lower() in v.lower()}
-
-            # Exibe data_editors para cada ação
             for ac_id in novas_acoes:
-                st.markdown(f"### Ação: {acoes_opcoes.get(ac_id, 'Desconhecida')}")
+                st.markdown(f"### Ação: {eixo['acoes_manejo'].get(ac_id, {}).get('nome_acao', acoes_opcoes.get(ac_id, '(sem nome)'))}")
                 ac_data = eixo["acoes_manejo"].get(ac_id, {"insumos": [], "valor_ucs": {}})
 
-                insumos_df = pd.DataFrame([
-                    {
-                        "ID": ins_id,
-                        "Insumo": desc,
-                        "Selecionado": ins_id in ac_data["insumos"]
-                    } for ins_id, desc in insumos_opcoes.items()
-                ])
+                # 4) Pega insumos ja selecionados (mesmo que nao batam no filter)
+                selecionados_ids = set(ac_data["insumos"])
+                df_sel = df_all_insumos[df_all_insumos["id"].isin(selecionados_ids)]
+
+                # 5) Unimos df_filter (batem no filtro) + df_sel (itens ja marcados)
+                df_final = pd.concat([df_filter, df_sel]).drop_duplicates(subset=["id"])
+
+                # 6) Marca col. Selecionado
+                df_final["Selecionado"] = df_final["id"].apply(lambda x: x in selecionados_ids)
+
+                # Remove colunas que não queremos exibir no data_editor
+                cols_to_remove = ["elemento_despesa", "especificacao_padrao"]
+                for c in cols_to_remove:
+                    if c in df_final.columns:
+                        df_final.drop(columns=[c], inplace=True)
+
+                
+                # Ajusta nomes de colunas
+                df_final.rename(columns={
+                    "id": "ID",
+                    "descricao_insumo": "Insumo"
+                }, inplace=True)
 
                 edited_insumos = st.data_editor(
-                    insumos_df,
+                    df_final,
                     column_config={
                         "ID": st.column_config.TextColumn(disabled=True),
                         "Insumo": st.column_config.TextColumn(disabled=True),
@@ -569,25 +677,25 @@ def editar_eixo_dialog(index_eixo):
                     key=f"editor_insumos_{ac_id}"
                 )
 
-                # Atualiza insumos de cada ação
-                ac_data["insumos"] = edited_insumos[edited_insumos["Selecionado"]]["ID"].tolist()
+                # 7) Lê as linhas marcadas
+                insumos_selecionados = edited_insumos.loc[edited_insumos["Selecionado"], "ID"].tolist()
+                ac_data["insumos"] = insumos_selecionados
                 eixo["acoes_manejo"][ac_id] = ac_data
 
-            # Botão para salvar
             submit_insumos = st.form_submit_button("Salvar Insumos")
             if submit_insumos:
-                # Salva tudo no session state
                 st.session_state["eixos_tematicos"][index_eixo] = eixo
-                st.success("Insumos atualizados!")
+                st.success("Insumos atualizados com sucesso!")
                 st.toast("Insumos atualizados!")
+                time.sleep(2)
                 st.rerun()
 
-    # --------------------------------------------------
-    # Por fim, pode haver um botão geral para encerrar
-    # --------------------------------------------------
+    # Botão geral para sair
     if st.button("Fechar e Voltar", key=f"btn_fechar_{index_eixo}"):
         st.session_state.modal_fechado = True
         st.rerun()
+
+
 
 
 
