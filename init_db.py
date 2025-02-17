@@ -158,8 +158,12 @@ def init_database():
             id_iniciativa INTEGER NOT NULL,
             usuario TEXT NOT NULL,
             data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            objetivo_geral TEXT NOT NULL,
+            objetivo_geral TEXT NOT NULL, 
             objetivo_especifico TEXT NOT NULL, -- JSON contendo os objetivos específicos
+            introducao TEXT,
+            justificativa TEXT,
+            metodologia TEXT,
+            demais_informacoes TEXT, -- JSON contendo as demais informações
             eixos_tematicos TEXT NOT NULL, -- JSON contendo os eixos temáticos por objetivo específico
             acoes_manejo TEXT NOT NULL, -- JSON contendo as ações de manejo associadas a cada eixo temático
             insumos TEXT NOT NULL, -- JSON contendo os insumos vinculados às ações de manejo

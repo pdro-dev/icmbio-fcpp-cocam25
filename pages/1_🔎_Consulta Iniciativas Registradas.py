@@ -429,16 +429,15 @@ else:
             # 📌 Concatenando a linha de total corretamente
             unidades_iniciativa = pd.concat([unidades_iniciativa, linha_total_iniciativa], ignore_index=True)
 
-            with st.expander("💰 Valores da Iniciativa", expanded=False):
-                st.dataframe(
-                    unidades_iniciativa.rename(columns={
-                        "VALOR TOTAL ALOCADO": "Valor Alocado (R$)",
-                        "Valor Total da Iniciativa": "Valor da Iniciativa (R$)"
-                    }),
-                    hide_index=True,
-                    use_container_width=True
-                )
-
+            # with st.expander("💰 Valores da Iniciativa", expanded=False):
+            #     st.dataframe(
+            #         unidades_iniciativa.rename(columns={
+            #             "VALOR TOTAL ALOCADO": "Valor Alocado (R$)",
+            #             "Valor Total da Iniciativa": "Valor da Iniciativa (R$)"
+            #         }),
+            #         hide_index=True,
+            #         use_container_width=True
+            #     )
 
 
 
