@@ -71,6 +71,12 @@ def carregar_dados_iniciativa(id_iniciativa):
 
     row = df.iloc[0]
 
+    # Verifica eixos temáticos salvos
+    try:
+        eixos_tematicos = json.loads(row["eixos_tematicos"]) if row["eixos_tematicos"] else []
+    except:
+        eixos_tematicos = []
+
     # Tentar carregar 'demais_informacoes' como dicionário
     info_json = row.get("demais_informacoes", "") or ""
     try:
@@ -322,7 +328,15 @@ nova_iniciativa = st.selectbox(
 # Só recarrega se a iniciativa mudou
 if "carregou_iniciativa" not in st.session_state or st.session_state["carregou_iniciativa"] != nova_iniciativa:
     dados_iniciativa = carregar_dados_iniciativa(nova_iniciativa)
-    st.session_state["eixos_tematicos"] = []  # Resetar eixos temáticos
+
+    # Se houver dados no banco, carregamos os eixos
+    if dados_iniciativa is not None:
+        st.session_state["eixos_tematicos"] = json.loads(dados_iniciativa.get("eixos_tematicos", "[]"))
+    else:
+        st.session_state["eixos_tematicos"] = []  # Mantém a estrutura vazia apenas se não houver dados
+
+    st.session_state["carregou_iniciativa"] = nova_iniciativa  # Atualiza a iniciativa carregada
+
 
     if dados_iniciativa is not None:
         # 2.1) Carregou do tf_cadastro_regras_negocio
@@ -746,6 +760,98 @@ with tab_eixos:
             st.rerun()
 
     # -----------------------------------------------------------------------------
+    # Modal de Edição de Valores por Unidade
+    # -----------------------------------------------------------------------------
+
+    # Modal de Edição de Valores por Unidade
+    @st.dialog("Editar Valores por Unidade", width="large")
+    def editar_valores_unidade(index_eixo):
+        if not (0 <= index_eixo < len(st.session_state["eixos_tematicos"])):
+            st.warning("Índice de Eixo Temático fora do intervalo.")
+            return
+
+        eixo = st.session_state["eixos_tematicos"][index_eixo]
+        st.subheader(f"Edição de Valores - {eixo.get('nome_eixo', '(Sem Nome)')}")
+
+        id_iniciativa = st.session_state.get("sel_iniciativa")
+        if not id_iniciativa:
+            st.error("Nenhuma iniciativa selecionada.")
+            return
+
+        # Carregar unidades e valores alocados na iniciativa
+        conn = sqlite3.connect(DB_PATH)
+        query = """
+            SELECT "Unidade de Conservação", "VALOR TOTAL ALOCADO"
+            FROM tf_cadastros_iniciativas
+            WHERE id_iniciativa = ?
+        """
+        df_unidades = pd.read_sql_query(query, conn, params=[id_iniciativa])
+        conn.close()
+
+        if df_unidades.empty:
+            st.info("Nenhuma unidade de conservação encontrada para esta iniciativa.")
+            return
+
+        df_unidades.rename(columns={"Unidade de Conservação": "Unidade", "VALOR TOTAL ALOCADO": "Valor Alocado"}, inplace=True)
+
+        # Recuperar valores editados anteriormente
+        valores_ucs = eixo.get("valor_ucs", {})
+
+        # Criar coluna "Novo Valor Alocado", mantendo valores editados
+        df_unidades["Novo Valor Alocado"] = df_unidades["Unidade"].apply(lambda x: valores_ucs.get(x, 0.0))
+
+        # Criar coluna "Saldo" antes de exibir o editor
+        df_unidades["Saldo"] = df_unidades["Valor Alocado"] - df_unidades["Novo Valor Alocado"]
+
+        # Toggle para copiar os valores da coluna "Valor Alocado"
+        copiar_valores = st.toggle("Copiar valores de 'Valor Alocado' para 'Novo Valor Alocado'", value=False)
+
+        # Se ativado, copia os valores da coluna "Valor Alocado"
+        if copiar_valores:
+            df_unidades["Novo Valor Alocado"] = df_unidades["Valor Alocado"]
+            df_unidades["Saldo"] = 0.0  
+
+        # Criar data editor com a coluna "Saldo"
+        edited_df = st.data_editor(
+            df_unidades,
+            column_config={
+                "Unidade": st.column_config.TextColumn(disabled=True),
+                "Valor Alocado": st.column_config.NumberColumn(disabled=True),
+                "Novo Valor Alocado": st.column_config.NumberColumn("Novo Valor Alocado", min_value=0.0),
+                "Saldo": st.column_config.NumberColumn("Saldo (Diferença)", disabled=True)
+            },
+            use_container_width=True,
+            key=f"editor_valores_{index_eixo}"
+        )
+
+        # Atualizar saldo após edição
+        edited_df["Saldo"] = edited_df["Valor Alocado"] - edited_df["Novo Valor Alocado"] # Calcula a diferença
+
+
+        # Salvar mudanças e atualizar saldo antes
+        if st.button("💾 Salvar Valores", key=f"btn_salvar_valores_{index_eixo}"):
+            # Recalcula o saldo antes de salvar
+            edited_df["Saldo"] = edited_df["Valor Alocado"] - edited_df["Novo Valor Alocado"]
+            
+            eixo["valor_ucs"] = {row["Unidade"]: row["Novo Valor Alocado"] for _, row in edited_df.iterrows() if row["Novo Valor Alocado"] > 0}
+
+            st.session_state["eixos_tematicos"][index_eixo] = eixo
+            st.success("Valores atualizados com sucesso!")
+            st.toast("Valores salvos!", icon="✅")
+            time.sleep(1)
+            st.rerun()
+
+
+        if st.button("❌ Fechar", key=f"btn_fechar_valores_{index_eixo}"):
+            st.session_state.modal_fechado = True
+            st.rerun()
+
+
+
+
+
+
+    # -----------------------------------------------------------------------------
     # Adicionar Eixo Temático
     # -----------------------------------------------------------------------------
     novo_eixo_id = st.selectbox(
@@ -772,16 +878,30 @@ with tab_eixos:
             else:
                 st.info("Este eixo já existe na lista.")
 
+    def calcular_valores_alocados(eixo):
+        """Calcula a soma dos valores editados e a contagem de unidades que receberam valores."""
+        if "valor_ucs" not in eixo or not eixo["valor_ucs"]:
+            return 0, 0  # Retorna (soma, quantidade) como zero se não houver dados
+
+        soma_valores = sum(eixo["valor_ucs"].values())
+        qtd_unidades = len(eixo["valor_ucs"])
+        return soma_valores, qtd_unidades
+
     # Lista de eixos criados
     for i, eixo in enumerate(st.session_state["eixos_tematicos"]):
         stats = calcular_estatisticas_eixo(eixo)
-        with st.expander(f"📌 Eixo: {eixo['nome_eixo']}", expanded=False):
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Ações", stats["acoes"])
-            col2.metric("Insumos", stats["insumos"])
-            col3.metric("Valor Total", f"R$ {stats['valor_total']:,.2f}")
+        valor_total_alocado, unidades_com_valor = calcular_valores_alocados(eixo)
 
-            with col4:
+        with st.expander(f"📌 Eixo: {eixo['nome_eixo']}", expanded=False):
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Ações", stats["acoes"], border=True)
+            col2.metric("Insumos", stats["insumos"], border=True)
+            # col2.metric("Valor Total", f"R$ {stats['valor_total']:,.2f}", border=True)
+            col1.metric("Total Alocado", f"R$ {valor_total_alocado:,.2f}", border=True)
+            col2.metric("Unidades Beneficiadas", unidades_com_valor, border=True)
+
+
+            with col3:
                 # col_edit, col_del = st.columns(2)
                 if st.button("▪️ Editar Ações e Insumos", key=f"btn_edit_{i}", use_container_width=True, type='secondary'):
                     st.session_state["modo_editar_eixo"] = i
@@ -797,13 +917,26 @@ with tab_eixos:
                     st.session_state["eixos_tematicos"].pop(i)
                     st.rerun()
 
-    modo_idx = st.session_state.get("modo_editar_eixo")
-    if modo_idx is not None and not st.session_state.get("modal_fechado", True):
-        if 0 <= modo_idx < len(st.session_state["eixos_tematicos"]):
-            editar_eixo_dialog(modo_idx)
+    # Verifica qual modal precisa ser aberto e garante que o correto seja acionado
+    modo_idx_valores = st.session_state.get("modo_editar_uc")
+    modo_idx_eixo = st.session_state.get("modo_editar_eixo")
+
+    if not st.session_state.get("modal_fechado", True):
+        if modo_idx_valores is not None and 0 <= modo_idx_valores < len(st.session_state["eixos_tematicos"]):
+            editar_valores_unidade(modo_idx_valores)
+            st.session_state["modo_editar_uc"] = None  # Resetar após uso
             st.stop()
-        else:
-            st.session_state["modo_editar_eixo"] = None
+        elif modo_idx_eixo is not None and 0 <= modo_idx_eixo < len(st.session_state["eixos_tematicos"]):
+            editar_eixo_dialog(modo_idx_eixo)
+            st.session_state["modo_editar_eixo"] = None  # Resetar após uso
+            st.stop()
+
+    # Se nenhum modal for acionado, resetamos os estados
+    st.session_state["modo_editar_eixo"] = None
+    st.session_state["modo_editar_uc"] = None
+
+
+
 
 col1, col2, col3 = st.columns(3)
 with col2:
