@@ -553,10 +553,10 @@ with st.form("form_textos_resumo"):
         st.write("---")
 
         # 2) Agora exibimos a lista (simulando uma tabela) com Editar/Remover
-        st.write("### Objetivos já adicionados:")
+        st.write("*Objetivos adicionados:*")
 
         # Cabeçalho tipo tabela
-        col1, col2, col3 = st.columns([1, 6, 3])
+        col1, col2, col3 = st.columns([1, 8, 3])
         col1.write("**#**")
         col2.write("**Objetivo**")
         col3.write("*Edição e Exclusão*")
@@ -769,6 +769,18 @@ with st.form("form_textos_resumo"):
     with tab_insumos:
         st.subheader("Insumos por Ação")
 
+        # Conectar ao banco para carregar a tabela de insumos
+        conn = sqlite3.connect(DB_PATH)
+        df_insumos_all = pd.read_sql_query(
+            "SELECT id, elemento_despesa, especificacao_padrao, descricao_insumo FROM td_insumos",
+            conn
+        )
+        conn.close()
+
+        # Inicializar estado para armazenar insumos selecionados, se ainda não existir
+        if "insumos_selecionados" not in st.session_state:
+            st.session_state["insumos_selecionados"] = {}
+
         for i, eixo in enumerate(st.session_state["eixos_tematicos"]):
             with st.expander(f"📌 {eixo['nome_eixo']}", expanded=False):
                 # Percorremos as ações daquele eixo
@@ -777,48 +789,105 @@ with st.form("form_textos_resumo"):
                         f"### Ação: {get_options_from_table('td_samge_acoes_manejo', 'id_ac', 'nome').get(ac_id, 'Ação Desconhecida')}"
                     )
 
-                    # 1) Carregar insumos disponíveis do banco
-                    conn = sqlite3.connect(DB_PATH)
-                    df_insumos_all = pd.read_sql_query(
-                        "SELECT id, descricao_insumo FROM td_insumos",
-                        conn
-                    )
-                    conn.close()
+                    # Inicializa a lista de insumos selecionados para essa ação, se ainda não existir
+                    if ac_id not in st.session_state["insumos_selecionados"]:
+                        st.session_state["insumos_selecionados"][ac_id] = set(ac_data.get("insumos", []))
 
-                    # 2) Renomear colunas internamente para "ID" e "Insumo"
-                    #    (Assim evitamos o KeyError e podemos usar "ID" diretamente)
-                    df_combo = df_insumos_all.rename(
+                    # Criar colunas para os filtros
+                    col_filtro_elemento, col_filtro_espec = st.columns([5, 5])
+
+                    # Filtro de Elemento de Despesa
+                    elementos_unicos = ["Todos"] + sorted(df_insumos_all["elemento_despesa"].dropna().unique())
+                    with col_filtro_elemento:
+                        elemento_selecionado = st.selectbox(
+                            "Selecione o Elemento de Despesa",
+                            elementos_unicos,
+                            key=f"elemento_{i}_{ac_id}"
+                        )
+
+                    # Filtrando os insumos conforme o elemento de despesa selecionado
+                    df_filtrado = (
+                        df_insumos_all
+                        if elemento_selecionado == "Todos"
+                        else df_insumos_all[df_insumos_all["elemento_despesa"] == elemento_selecionado]
+                    )
+
+                    # Filtro de Especificação Padrão
+                    especificacoes_unicas = ["Todos"] + sorted(df_filtrado["especificacao_padrao"].dropna().unique())
+                    with col_filtro_espec:
+                        especificacao_selecionada = st.selectbox(
+                            "Selecione a Especificação Padrão",
+                            especificacoes_unicas,
+                            key=f"especificacao_{i}_{ac_id}"
+                        )
+
+                    # Aplicando o segundo filtro caso o usuário selecione uma especificação
+                    if especificacao_selecionada != "Todos":
+                        df_filtrado = df_filtrado[df_filtrado["especificacao_padrao"] == especificacao_selecionada]
+
+                    # Renomeando colunas para melhor compatibilidade com data_editor
+                    df_combo = df_filtrado.rename(
                         columns={
                             "id": "ID",
                             "descricao_insumo": "Insumo"
                         }
                     )
 
-                    # 3) Marcar quais insumos já estão selecionados
-                    sel_ids = set(ac_data.get("insumos", []))
+                    # Recupera o "master" de insumos já selecionados do estado para essa ação
+                    sel_ids = st.session_state["insumos_selecionados"][ac_id]
+
+                    # Marcamos a coluna "Selecionado" com True/False se estiver no "master"
                     df_combo["Selecionado"] = df_combo["ID"].apply(lambda x: x in sel_ids)
 
-                    # 4) Exibir Data Editor num formulário
+                    # Exibir Data Editor dentro de um formulário
                     with st.form(f"form_insumos_{i}_{ac_id}"):
-                        # Podemos configurar filtros nas colunas usando 'filter="text"' ou True
                         edited_ins = st.data_editor(
-                            df_combo,
+                            df_combo[["ID", "Insumo", "Selecionado"]],
                             column_config={
-                                "ID": st.column_config.TextColumn("Cód. Insumo", disabled=True),  # removemos `filter=...`
+                                "ID": st.column_config.TextColumn("Cód. Insumo", disabled=True),
                                 "Insumo": st.column_config.TextColumn("Descrição do Insumo", disabled=True),
-                                "Selecionado": st.column_config.CheckboxColumn("Selecionar")       # removemos `filter=True`
+                                "Selecionado": st.column_config.CheckboxColumn("Selecionar")
                             },
                             hide_index=True,
                             use_container_width=True,
                             key=f"editor_ins_{i}_{ac_id}"
                         )
 
-                        # 5) Salvamos insumos selecionados ao clicar
+                        # Botão para salvar as seleções sem perder insumos anteriores
+                        # O clique desse botão só controla o subset atual (df_filtrado)
                         if st.form_submit_button("Salvar Insumos"):
-                            # Agora "ID" de fato existe no DF
-                            selecionados = edited_ins.loc[edited_ins["Selecionado"], "ID"].tolist()
-                            ac_data["insumos"] = selecionados
-                            st.success("Insumos atualizados!")
+                            # "edited_ins" contém apenas o subset filtrado
+                            # Precisamos mesclar com o "master" (sel_ids)
+
+                            # 1) Obtemos o conjunto marcado agora:
+                            selecionados_agora = set(edited_ins.loc[edited_ins["Selecionado"], "ID"])
+
+                            # 2) Vamos atualizar o master:
+                            #    - adiciona os que foram marcados
+                            #    - remove os que foram desmarcados e que estão presentes no df_filtrado
+                            # (itens fora do df_filtrado ficam inalterados)
+                            for item_id in df_combo["ID"]:
+                                if item_id in selecionados_agora:
+                                    sel_ids.add(item_id)     # marcado => adiciona ao master
+                                else:
+                                    # se está no master e está no subset filtrado, remove
+                                    if item_id in sel_ids:
+                                        sel_ids.remove(item_id)
+
+                            # salva de volta no session_state
+                            st.session_state["insumos_selecionados"][ac_id] = sel_ids
+                            # atualiza o dicionário da ação
+                            ac_data["insumos"] = list(sel_ids)
+
+                            st.success("Seleção atualizada (sem perder itens já escolhidos em outros filtros)!")
+
+                    # Botão para limpar todas as seleções de insumos dessa ação
+                    if st.button("Limpar Lista de Insumos", key=f"limpar_{i}_{ac_id}"):
+                        st.session_state["insumos_selecionados"][ac_id] = set()
+                        ac_data["insumos"] = []
+                        st.success("Todos os insumos foram removidos para esta ação!")
+
+
 
 
     # -------------------------------------------
@@ -827,7 +896,7 @@ with st.form("form_textos_resumo"):
     with tab_uc:
         st.subheader("Distribuição de Recursos por Eixo")
 
-        # Conectar ao banco e buscar os dados corretos da tabela tf_cadastros_iniciativas
+        # 1) Conectar ao banco e buscar os dados corretos da tabela tf_cadastros_iniciativas
         conn = sqlite3.connect(DB_PATH)
         query = """
             SELECT 
@@ -838,63 +907,60 @@ with st.form("form_textos_resumo"):
             WHERE id_iniciativa = ?
             AND "VALOR TOTAL ALOCADO" > 0
         """
-        df_unidades = pd.read_sql_query(query, conn, params=[nova_iniciativa])
+        df_unidades_raw = pd.read_sql_query(query, conn, params=[nova_iniciativa])
         conn.close()
 
-        if df_unidades.empty:
+        # 2) Se nenhum registro for encontrado, emitir alerta
+        if df_unidades_raw.empty:
             st.warning("Nenhuma unidade de conservação encontrada para esta iniciativa.")
         else:
-            # Define as colunas fixas iniciais
-            colunas_fixas = ["Unidade", "Acao", "Valor Alocado"]
-
-            # Ordena as colunas para garantir que os eixos apareçam na sequência correta
-            colunas_eixos = [eixo["nome_eixo"] for eixo in st.session_state["eixos_tematicos"]]
-            colunas_ordenadas = colunas_fixas + colunas_eixos + ["Saldo"]
-
-            # Inicializa session_state para armazenar os valores editados
+            # 3) Inicializar ou carregar o df_uc_editado do session_state
             if "df_uc_editado" not in st.session_state:
-                st.session_state["df_uc_editado"] = df_unidades.copy()
-
-            df_editavel = st.session_state["df_uc_editado"]
-
-            # Verifica se a coluna 'Valor Alocado' existe no DataFrame
-            if "Valor Alocado" in df_editavel.columns:
-                # Filtrar linhas com valores alocados > 0
-                df_editavel = df_editavel[df_editavel["Valor Alocado"] > 0]
+                # Salvamos o DataFrame cru no session_state
+                st.session_state["df_uc_editado"] = df_unidades_raw.copy()
             else:
-                st.warning("A coluna 'Valor Alocado' não foi encontrada no DataFrame.")
+                # Caso já exista, atualizamos apenas se a consulta trouxe novos dados
+                # (Aqui você pode decidir se substitui ou mescla. Exemplo simples: substitui se for vazio.)
+                if st.session_state["df_uc_editado"].empty:
+                    st.session_state["df_uc_editado"] = df_unidades_raw.copy()
 
-            # Criar colunas dinâmicas para cada eixo adicionado
-            for eixo in st.session_state["eixos_tematicos"]:
-                eixo_nome = eixo["nome_eixo"]
-                if eixo_nome not in df_editavel.columns:
-                    df_editavel[eixo_nome] = 0  # Inicializa com zero
+            # 4) Copiar para trabalhar localmente (sem perder o original no session_state)
+            df_editavel = st.session_state["df_uc_editado"].copy()
 
-            # Verifica se a coluna 'Valor Alocado' existe no DataFrame
-            if "Valor Alocado" in df_editavel.columns:
-                # Criar coluna de saldo (inicialmente igual ao valor alocado)
-                df_editavel["Saldo"] = df_editavel["Valor Alocado"] - df_editavel[
-                    [eixo["nome_eixo"] for eixo in st.session_state["eixos_tematicos"]]
-                ].sum(axis=1)
-            else:
-                st.warning("A coluna 'Valor Alocado' não foi encontrada no DataFrame.")
-
-            # Verifica se as colunas fixas existem no DataFrame antes de reordenar
-            for col in colunas_fixas + ["Saldo"]:
+            # 5) Garantir que as colunas fixas existam
+            colunas_fixas = ["Unidade", "Acao", "Valor Alocado"]
+            for col in colunas_fixas:
                 if col not in df_editavel.columns:
-                    df_editavel[col] = 0  # Inicializa com zero se não existir
+                    df_editavel[col] = 0  # se não existe, cria
 
-            # Reordena as colunas no DataFrame antes de exibir no `data_editor`
+            # 6) Criar colunas para cada eixo (se não existir)
+            colunas_eixos = [eixo["nome_eixo"] for eixo in st.session_state["eixos_tematicos"]]
+            for eixo_nome in colunas_eixos:
+                if eixo_nome not in df_editavel.columns:
+                    df_editavel[eixo_nome] = 0  # inicializa com zero
+
+            # 7) Criar/Atualizar a coluna de saldo
+            # Antes, garantir que "Valor Alocado" seja numérico
+            df_editavel["Valor Alocado"] = pd.to_numeric(df_editavel["Valor Alocado"], errors="coerce").fillna(0)
+            # Também forçar eixos para numérico
+            for eixo_nome in colunas_eixos:
+                df_editavel[eixo_nome] = pd.to_numeric(df_editavel[eixo_nome], errors="coerce").fillna(0)
+
+            # Calcula o saldo
+            df_editavel["Saldo"] = df_editavel["Valor Alocado"] - df_editavel[colunas_eixos].sum(axis=1)
+
+            # 8) Reordenar colunas para exibir no data_editor
+            colunas_ordenadas = colunas_fixas + colunas_eixos + ["Saldo"]
             df_editavel = df_editavel[colunas_ordenadas]
 
-            # Criar um formulário para o botão "Verificar Saldos"
+            # 9) Exibir formulário para editar os valores por eixo
             with st.form("form_uc"):
                 edited_df = st.data_editor(
                     df_editavel,
                     column_config={
-                        "Unidade": st.column_config.TextColumn(disabled=True),
+                        "Unidade": st.column_config.TextColumn("Unidade de Conservação", disabled=True),
                         "Acao": st.column_config.TextColumn("Ação de Aplicação", disabled=True),
-                        "Valor Alocado": st.column_config.NumberColumn(disabled=True),
+                        "Valor Alocado": st.column_config.NumberColumn("Valor Alocado", disabled=True),
                         "Saldo": st.column_config.NumberColumn("Saldo", disabled=True)
                     },
                     use_container_width=True,
@@ -902,22 +968,20 @@ with st.form("form_textos_resumo"):
                     hide_index=True,
                 )
 
-                # Botão para verificar os saldos dentro do formulário
+                # Botão para verificar e recalcular os saldos
                 if st.form_submit_button("Verificar Saldos"):
-                    for eixo in st.session_state["eixos_tematicos"]:
-                        eixo_nome = eixo["nome_eixo"]
-                        if eixo_nome in edited_df.columns:
-                            df_editavel[eixo_nome] = edited_df[eixo_nome]  # Atualiza valores por eixo
+                    # Converter cada eixo para numérico
+                    for eixo_nome in colunas_eixos:
+                        edited_df[eixo_nome] = pd.to_numeric(edited_df[eixo_nome], errors="coerce").fillna(0)
 
-                    # Recalcula saldo por unidade
-                    df_editavel["Saldo"] = df_editavel["Valor Alocado"] - df_editavel[
-                        [eixo["nome_eixo"] for eixo in st.session_state["eixos_tematicos"]]
-                    ].sum(axis=1)
+                    # Recalcular o saldo
+                    edited_df["Saldo"] = edited_df["Valor Alocado"] - edited_df[colunas_eixos].sum(axis=1)
 
-                    # Atualiza session state com os novos valores
-                    st.session_state["df_uc_editado"] = df_editavel.copy()
+                    # Armazenar resultado de volta no session_state
+                    st.session_state["df_uc_editado"] = edited_df.copy()
 
                     st.success("Distribuição de recursos atualizada!")
+
 
 
 
