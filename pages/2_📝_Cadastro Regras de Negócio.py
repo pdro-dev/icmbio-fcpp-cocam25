@@ -1,10 +1,22 @@
+###############################################################################
+#                          IMPORTS E CONFIGURAÇÕES
+###############################################################################
+
 import streamlit as st
 import sqlite3
 import json
 import pandas as pd
 import time as time
 
-# Verifica login
+import streamlit as st
+import sqlite3
+import json
+import pandas as pd
+import time as time
+
+# -----------------------------------------------------------------------------
+#                     Verificação de Login e Configurações de Página
+# -----------------------------------------------------------------------------
 if "usuario_logado" not in st.session_state or not st.session_state["usuario_logado"]:
     st.warning("🔒 Acesso negado! Faça login.")
     st.stop()
@@ -27,13 +39,19 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# Caminho do banco de dados
 DB_PATH = "database/app_data.db"
+
 
 # -----------------------------------------------------------------------------
 #                          FUNÇÕES AUXILIARES / CACHED
 # -----------------------------------------------------------------------------
 @st.cache_data
-def get_iniciativas_usuario(perfil, setor):
+def get_iniciativas_usuario(perfil: str, setor: str) -> pd.DataFrame:
+    """
+    Retorna as iniciativas disponíveis para o usuário,
+    filtradas por perfil e setor, se não for 'admin'.
+    """
     conn = sqlite3.connect(DB_PATH)
     query = "SELECT id_iniciativa, nome_iniciativa FROM td_iniciativas"
     if perfil != "admin":
@@ -52,9 +70,13 @@ def get_iniciativas_usuario(perfil, setor):
     conn.close()
     return iniciativas
 
+
 @st.cache_data
-def carregar_dados_iniciativa(id_iniciativa):
-    """Carrega a última linha de tf_cadastro_regras_negocio (caso exista)."""
+def carregar_dados_iniciativa(id_iniciativa: int) -> dict | None:
+    """
+    Carrega a última linha de tf_cadastro_regras_negocio para a iniciativa dada.
+    Retorna um dicionário com as colunas esperadas ou None se não existir.
+    """
     conn = sqlite3.connect(DB_PATH)
     query = """
         SELECT *
@@ -71,13 +93,13 @@ def carregar_dados_iniciativa(id_iniciativa):
 
     row = df.iloc[0]
 
-    # Verifica eixos temáticos salvos
+    # Eixos temáticos salvos em JSON
     try:
         eixos_tematicos = json.loads(row["eixos_tematicos"]) if row["eixos_tematicos"] else []
     except:
         eixos_tematicos = []
 
-    # Tentar carregar 'demais_informacoes' como dicionário
+    # Demais informações salvas em JSON
     info_json = row.get("demais_informacoes", "") or ""
     try:
         info_dict = json.loads(info_json) if info_json else {}
@@ -86,17 +108,21 @@ def carregar_dados_iniciativa(id_iniciativa):
 
     return {
         "objetivo_geral":      row["objetivo_geral"],
-        "objetivo_especifico": row["objetivo_especifico"],
+        "objetivos_especificso": row["objetivos_especificos"],
         "eixos_tematicos":     row["eixos_tematicos"],
         "introducao":          row.get("introducao", ""),
         "justificativa":       row.get("justificativa", ""),
         "metodologia":         row.get("metodologia", ""),
-        "demais_informacoes":  info_dict,  # dicionário com {diretoria, coord_geral, etc.}
+        "demais_informacoes":  info_dict
     }
 
+
 @st.cache_data
-def carregar_resumo_iniciativa(setor):
-    """Exemplo simples: carrega o resumo a partir de td_dados_resumos_sei, filtrando por demandante."""
+def carregar_resumo_iniciativa(setor: str) -> pd.DataFrame | None:
+    """
+    Carrega o resumo a partir de td_dados_resumos_sei, filtrando por 'demandante' = setor.
+    Retorna um DataFrame ou None se vazio.
+    """
     conn = sqlite3.connect(DB_PATH)
     query = "SELECT * FROM td_dados_resumos_sei WHERE demandante = ?"
     df = pd.read_sql_query(query, conn, params=[setor])
@@ -105,26 +131,31 @@ def carregar_resumo_iniciativa(setor):
         return None
     return df
 
+
 def salvar_dados_iniciativa(
-    id_iniciativa,
-    usuario,
-    objetivo_geral,
-    objetivos_especificos,
-    eixos_tematicos,
-    introducao,
-    justificativa,
-    metodologia,
-    demais_informacoes
+    id_iniciativa: int,
+    usuario: str,
+    objetivo_geral: str,
+    objetivos_especificos: list[str],
+    eixos_tematicos: list[dict],
+    introducao: str,
+    justificativa: str,
+    metodologia: str,
+    demais_informacoes: dict
 ):
     """
     Salva registro na tf_cadastro_regras_negocio, mantendo histórico máximo de 3 registros.
+
     - objetivos_especificos: lista de strings
     - eixos_tematicos: lista de dicts
+    - demais_informacoes: dict de informações complementares
+
+    Também atualiza as colunas "acoes_manejo" e "insumos" com base nos eixos.
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Limite de 3 históricos
+    # Limite de 3 históricos por iniciativa
     cursor.execute("""
         SELECT COUNT(*)
         FROM tf_cadastro_regras_negocio
@@ -147,6 +178,7 @@ def salvar_dados_iniciativa(
     objetivos_json = json.dumps(objetivos_especificos or [])
     eixos_json     = json.dumps(eixos_tematicos or [])
 
+    # Extrai lista de acoes e insumos a partir de eixos
     acoes_set   = set()
     insumos_set = set()
     for eixo in eixos_tematicos:
@@ -158,7 +190,7 @@ def salvar_dados_iniciativa(
     acoes_json  = json.dumps(list(acoes_set))
     insumos_json = json.dumps(list(insumos_set))
 
-    # Monta a 'regra' consolidada
+    # Regra consolidada
     final_rule = {
         "objetivo_geral": objetivo_geral,
         "objetivos_especificos": objetivos_especificos,
@@ -171,13 +203,13 @@ def salvar_dados_iniciativa(
     # Converte o dicionário 'demais_informacoes' em JSON
     demais_info_json = json.dumps(demais_informacoes) if demais_informacoes else "{}"
 
-    # Insere
+    # Insere no banco
     cursor.execute("""
         INSERT INTO tf_cadastro_regras_negocio (
             id_iniciativa,
             usuario,
             objetivo_geral,
-            objetivo_especifico,
+            objetivos_especificos,
             eixos_tematicos,
             acoes_manejo,
             insumos,
@@ -206,8 +238,20 @@ def salvar_dados_iniciativa(
     conn.commit()
     conn.close()
 
+
 @st.cache_data
-def get_options_from_table(table_name, id_col, name_col, filter_col=None, filter_val=None):
+def get_options_from_table(
+    table_name: str,
+    id_col: str,
+    name_col: str,
+    filter_col: str | None = None,
+    filter_val: str | None = None
+) -> dict[str, str]:
+    """
+    Lê da tabela `table_name` as colunas `id_col` e `name_col`.
+    Opcionalmente filtra por `filter_col = filter_val`.
+    Retorna um dict { id_val: name_val }.
+    """
     conn = sqlite3.connect(DB_PATH)
     query = f"SELECT {id_col}, {name_col} FROM {table_name}"
     params = ()
@@ -218,14 +262,40 @@ def get_options_from_table(table_name, id_col, name_col, filter_col=None, filter
     df = pd.read_sql_query(query, conn, params=params)
     conn.close()
 
-    # Retorna dict do tipo {"1": "Nome", "2": "Outro Nome", ...}
     return {str(row[id_col]): row[name_col] for _, row in df.iterrows()}
 
+
 # -----------------------------------------------------------------------------
-#                            Sessão e funções
+#            Inicialização para evitar KeyError no session_state
+# -----------------------------------------------------------------------------
+
+for key in ["introducao", "justificativa", "metodologia", "objetivo_geral"]:
+    if key not in st.session_state:
+        st.session_state[key] = ""
+
+if "demais_informacoes" not in st.session_state:
+    st.session_state["demais_informacoes"] = {}
+
+if "objetivos_especificos" not in st.session_state:
+    st.session_state["objetivos_especificos"] = []
+
+if "eixos_tematicos" not in st.session_state:
+    st.session_state["eixos_tematicos"] = []
+
+if "df_uc_editado" not in st.session_state:
+    st.session_state["df_uc_editado"] = pd.DataFrame()
+
+if "insumos" not in st.session_state:
+    st.session_state["insumos"] = {}
+
+
+
+
+# -----------------------------------------------------------------------------
+#          Função para exibir informações complementares na barra lateral
 # -----------------------------------------------------------------------------
 def exibir_info_lateral(id_iniciativa: int):
-    """Exibe no sidebar informações complementares."""
+    """Exibe no sidebar informações complementares da iniciativa."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -264,7 +334,7 @@ def exibir_info_lateral(id_iniciativa: int):
     else:
         st.sidebar.info("Sem resumo SEI cadastrado para esta iniciativa.")
 
-    # 3) Eixos existentes
+    # 3) Eixos existentes (último registro)
     row_eixos = cursor.execute("""
         SELECT eixos_tematicos
         FROM tf_cadastro_regras_negocio
@@ -291,27 +361,17 @@ def exibir_info_lateral(id_iniciativa: int):
     else:
         st.sidebar.info("Nenhum eixo temático cadastrado.")
 
-# -----------------------------------------------------------------------------
-#            Inicialização para evitar KeyError no session_state
-# -----------------------------------------------------------------------------
-for key in ["introducao", "justificativa", "metodologia"]:
-    if key not in st.session_state:
-        st.session_state[key] = ""
-
-if "demais_informacoes" not in st.session_state:
-    st.session_state["demais_informacoes"] = {}
 
 # -----------------------------------------------------------------------------
 #                           Início da Página
 # -----------------------------------------------------------------------------
 st.subheader("📝 Cadastro de Regras de Negócio")
-# st.divider()
 
 perfil      = st.session_state["perfil"]
 setor       = st.session_state["setor"]
 cpf_usuario = st.session_state["cpf"]
 
-# 2) Seleciona Iniciativa
+# 1) Seleciona Iniciativa do usuário
 iniciativas = get_iniciativas_usuario(perfil, setor)
 if iniciativas.empty:
     st.warning("🚫 Nenhuma iniciativa disponível para você.")
@@ -324,169 +384,215 @@ nova_iniciativa = st.selectbox(
     key="sel_iniciativa"
 )
 
+st.caption("ℹ️ Informações Originais do Resumo Executivo de Iniciativas disponíveis no final da página", help="ref.: documentos SEI")
 
-# Só recarrega se a iniciativa mudou
+# 2) Carregamento inicial da iniciativa se mudou
 if "carregou_iniciativa" not in st.session_state or st.session_state["carregou_iniciativa"] != nova_iniciativa:
-    dados_iniciativa = carregar_dados_iniciativa(nova_iniciativa)
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    # 1️⃣ BUSCA DADOS NA TABELA PRINCIPAL PRIMEIRO (tf_cadastro_regras_negocio)
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    conn = sqlite3.connect(DB_PATH)
+    query = """
+        SELECT objetivo_geral, objetivos_especificos, eixos_tematicos,
+               introducao, justificativa, metodologia, demais_informacoes
+        FROM tf_cadastro_regras_negocio
+        WHERE id_iniciativa = ?
+        ORDER BY data_hora DESC
+        LIMIT 1
+    """
+    dados_iniciativa = pd.read_sql_query(query, conn, params=[nova_iniciativa])
+    conn.close()
 
-    # Se houver dados no banco, carregamos os eixos
-    if dados_iniciativa is not None:
-        st.session_state["eixos_tematicos"] = json.loads(dados_iniciativa.get("eixos_tematicos", "[]"))
-    else:
-        st.session_state["eixos_tematicos"] = []  # Mantém a estrutura vazia apenas se não houver dados
+    if not dados_iniciativa.empty:
+        row = dados_iniciativa.iloc[0]
 
-    st.session_state["carregou_iniciativa"] = nova_iniciativa  # Atualiza a iniciativa carregada
+        # Objetivos Específicos: Sempre carrega do banco primeiro
+        try:
+            objetivos_especificos = json.loads(row["objetivos_especificos"]) if row["objetivos_especificos"] else []
+        except:
+            objetivos_especificos = []
 
+        st.session_state["objetivo_geral"] = row["objetivo_geral"]
+        st.session_state["objetivos_especificos"] = objetivos_especificos
 
-    if dados_iniciativa is not None:
-        # 2.1) Carregou do tf_cadastro_regras_negocio
-        st.session_state["objetivo_geral"]        = dados_iniciativa["objetivo_geral"]
-        st.session_state["objetivos_especificos"] = json.loads(dados_iniciativa["objetivo_especifico"] or "[]")
-        # Eixos
-        if "eixos_tematicos" not in st.session_state or not st.session_state["eixos_tematicos"]:
-            st.session_state["eixos_tematicos"] = json.loads(dados_iniciativa["eixos_tematicos"] or "[]")
-
-        st.session_state["introducao"]    = dados_iniciativa["introducao"]
-        st.session_state["justificativa"] = dados_iniciativa["justificativa"]
-        st.session_state["metodologia"]   = dados_iniciativa["metodologia"]
-
-        # Se vier no dicionário
-        st.session_state["demais_informacoes"] = dados_iniciativa.get("demais_informacoes", {})
-
-    else:
-        # 2.2) Não achou nada em tf_cadastro_regras_negocio => Inicializa session_state
-        st.session_state["objetivo_geral"]        = ""
-        st.session_state["objetivos_especificos"] = []
-        if "eixos_tematicos" not in st.session_state or not st.session_state["eixos_tematicos"]:
+        # Eixos Temáticos
+        try:
+            st.session_state["eixos_tematicos"] = json.loads(row["eixos_tematicos"]) if row["eixos_tematicos"] else []
+        except:
             st.session_state["eixos_tematicos"] = []
-        st.session_state["introducao"]    = ""
+
+        # Textos
+        st.session_state["introducao"] = row["introducao"]
+        st.session_state["justificativa"] = row["justificativa"]
+        st.session_state["metodologia"] = row["metodologia"]
+
+        # Demais informações
+        try:
+            st.session_state["demais_informacoes"] = json.loads(row["demais_informacoes"]) if row["demais_informacoes"] else {}
+        except:
+            st.session_state["demais_informacoes"] = {}
+
+    else:
+        # Se não houver dados em `tf_cadastro_regras_negocio`, inicia com valores vazios
+        st.session_state["objetivo_geral"] = ""
+        st.session_state["objetivos_especificos"] = []
+        st.session_state["eixos_tematicos"] = []
+        st.session_state["introducao"] = ""
         st.session_state["justificativa"] = ""
-        st.session_state["metodologia"]   = ""
+        st.session_state["metodologia"] = ""
         st.session_state["demais_informacoes"] = {}
 
-    # 2.3) Fallback: Se objetivo_geral ainda estiver vazio, busca no SEI
-    if not st.session_state["objetivo_geral"]:
-        conn = sqlite3.connect(DB_PATH)
-        row_fallback = conn.execute("""
-            SELECT objetivo_geral
-            FROM td_dados_resumos_sei
-            WHERE id_resumo = ?
-            LIMIT 1
-        """, (nova_iniciativa,)).fetchone()
-        conn.close()
+        # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        # 2️⃣ FALLBACK: BUSCA DADOS NO RESUMO (td_dados_resumos_sei) APENAS SE O PRINCIPAL ESTIVER VAZIO
+        # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        if not st.session_state["objetivo_geral"]:
+            conn = sqlite3.connect(DB_PATH)
+            row_fallback = conn.execute("""
+                SELECT objetivo_geral FROM td_dados_resumos_sei
+                WHERE id_resumo = ? LIMIT 1
+            """, (nova_iniciativa,)).fetchone()
+            conn.close()
 
-        if row_fallback:
-            obj_geral_sei = row_fallback[0] or ""
-            if obj_geral_sei:
-                st.session_state["objetivo_geral"] = obj_geral_sei
+            if row_fallback:
+                obj_geral_sei = row_fallback[0] or ""
+                if obj_geral_sei:
+                    st.session_state["objetivo_geral"] = obj_geral_sei
 
-    # 2.4) Fallback para introducao, justificativa e metodologia, se ainda vazios
-    if (not st.session_state["introducao"]) or (not st.session_state["justificativa"]) or (not st.session_state["metodologia"]):
-        conn = sqlite3.connect(DB_PATH)
-        row_resumo_2 = conn.execute("""
-            SELECT introdução,
-                   justificativa,
-                   metodologia,
-                   diretoria,
-                   coordenação_geral,
-                   coordenação,
-                   demandante
-            FROM td_dados_resumos_sei
-            WHERE id_resumo = ?
-            LIMIT 1
-        """, (nova_iniciativa,)).fetchone()
-        conn.close()
+        if not st.session_state["introducao"] or not st.session_state["justificativa"] or not st.session_state["metodologia"]:
+            conn = sqlite3.connect(DB_PATH)
+            row_resumo_2 = conn.execute("""
+                SELECT introdução, justificativa, metodologia
+                FROM td_dados_resumos_sei
+                WHERE id_resumo = ?
+                LIMIT 1
+            """, (nova_iniciativa,)).fetchone()
+            conn.close()
 
-        if row_resumo_2:
-            (intro_sei, justif_sei, metod_sei,
-             dir_sei, coord_geral_sei, coord_sei, demand_sei) = row_resumo_2
+            if row_resumo_2:
+                intro_sei, justif_sei, metod_sei = row_resumo_2
 
-            if not st.session_state["introducao"] and intro_sei:
-                st.session_state["introducao"] = intro_sei
-            if not st.session_state["justificativa"] and justif_sei:
-                st.session_state["justificativa"] = justif_sei
-            if not st.session_state["metodologia"] and metod_sei:
-                st.session_state["metodologia"] = metod_sei
+                if not st.session_state["introducao"] and intro_sei:
+                    st.session_state["introducao"] = intro_sei
+                if not st.session_state["justificativa"] and justif_sei:
+                    st.session_state["justificativa"] = justif_sei
+                if not st.session_state["metodologia"] and metod_sei:
+                    st.session_state["metodologia"] = metod_sei
 
-            # Se "demais_informacoes" estiver vazio, podemos puxar de lá:
-            if not st.session_state["demais_informacoes"]:
-                st.session_state["demais_informacoes"] = {
-                    "diretoria":          dir_sei or "",
-                    "coordenacao_geral":  coord_geral_sei or "",
-                    "coordenacao":        coord_sei or "",
-                    "demandante":         demand_sei or ""
-                }
-
-    # 2.5) Marca que carregou
+    # 3️⃣ Finaliza o carregamento
     st.session_state["carregou_iniciativa"] = nova_iniciativa
 
 
-# Barra lateral
+
+# Exibe na barra lateral (checkbox)
 if st.sidebar.checkbox("Exibir informações da iniciativa", value=True):
     exibir_info_lateral(nova_iniciativa)
-
 
 st.divider()
 
 st.write(f"**Iniciativa Selecionada:** {iniciativas.set_index('id_iniciativa').loc[nova_iniciativa, 'nome_iniciativa']}")
 
-# -------------------------------------------------------------------
-#      TABS: Objetivos / Introdução / Justificativa / Metodologia
-#            e a aba para Demais Informações
-# -------------------------------------------------------------------
-tab_intro, tab_obj, tab_justif, tab_metod, tab_eixos, tab_infos = st.tabs([
-    "Introdução", "Objetivos", "Justificativa", "Metodologia", "Eixos Temáticos", "Demais Informações"
+
+
+# ---------------------------------------------------------
+#  TABS: Introdução / Objetivos / Justificativa / Metodologia
+#        e a aba para Demais Informações
+# ---------------------------------------------------------
+tab_intro, tab_obj, tab_justif, tab_metod, tab_demandante, tab_eixos, tab_insumos, tab_uc  = st.tabs([
+    "Introdução",
+    "Objetivos",
+    "Justificativa",
+    "Metodologia",
+    "Demandante",
+    "Eixos Temáticos",
+    "Insumos",
+    "Unidades de Conservação"
 ])
 
 
-# -------------------------------------------
-# 1) OBJETIVOS
-# -------------------------------------------
-with tab_obj:
-    st.subheader("Objetivo Geral")
-    st.session_state["objetivo_geral"] = st.text_area(
-        "Descreva o Objetivo Geral:",
-        value=st.session_state["objetivo_geral"],
-        height=140,
-    )
-
-    st.subheader("Objetivos Específicos")
-    with st.form("form_objetivos_especificos"):
-        with st.expander("Objetivos Específicos Listados", expanded=False):
-            st.write("📝 Edite os objetivos específicos da iniciativa.")
-            st.caption("ℹ️ Use a tabela para adicionar, editar ou remover objetivos específicos.")
-
-            obj_df = pd.DataFrame({
-                "Objetivo Específico": st.session_state["objetivos_especificos"]
-            }, dtype=str)
-
-            edited_df = st.data_editor(
-                obj_df,
-                num_rows="dynamic",
-                use_container_width=True,
-                column_config={
-                    "Objetivo Específico": st.column_config.TextColumn(
-                        "Descrição do Objetivo",
-                        help="Digite cada objetivo específico",
-                        default="",
-                        max_chars=500
-                    )
-                },
-                key="data_editor_objetivos"
-            )
-            btn_obj = st.form_submit_button("Aplicar alterações")
-            if btn_obj:
-                st.session_state["objetivos_especificos"] = (
-                    edited_df["Objetivo Específico"].dropna().tolist()
-                )
-                st.success("Objetivos específicos atualizados com sucesso!")
-
-# -------------------------------------------
-# 2) INTRODUÇÃO, JUSTIFICATIVA, METODOLOGIA
-# -------------------------------------------
 with st.form("form_textos_resumo"):
+
+    # ---------------------------------------------------------
+    # 1) OBJETIVOS
+    # (aba separada, pois tem seu próprio form para atualizar
+    #  objetivos específicos)
+    # ---------------------------------------------------------
+    with tab_obj:
+        st.subheader("Objetivo Geral")
+        st.session_state["objetivo_geral"] = st.text_area(
+            "Descreva o Objetivo Geral:",
+            value=st.session_state["objetivo_geral"],
+            height=140
+        )
+
+        st.subheader("Objetivos Específicos")
+
+        # Se não existir, inicializa a lista de objetivos em session_state
+        if "objetivos_especificos" not in st.session_state:
+            st.session_state["objetivos_especificos"] = []
+
+        # 1) Campo e botão para adicionar NOVO objetivo (acima da lista)
+        def adicionar_objetivo_callback():
+            texto_novo = st.session_state.txt_novo_objetivo.strip()
+            if texto_novo:
+                st.session_state["objetivos_especificos"].append(texto_novo)
+                st.session_state.txt_novo_objetivo = ""  # limpa a caixa após adicionar
+            else:
+                st.warning("O texto do objetivo está vazio. Por favor, digite algo antes de adicionar.")
+
+        st.text_area(
+            label="Digite o texto do objetivo específico a ser adicionado e clique no botão:",
+            key="txt_novo_objetivo",
+            height=80
+        )
+
+        st.button(
+            label="Adicionar Objetivo",
+            on_click=adicionar_objetivo_callback
+        )
+
+        st.write("---")
+
+        # 2) Agora exibimos a lista (simulando uma tabela) com Editar/Remover
+        st.write("### Objetivos já adicionados:")
+
+        # Cabeçalho tipo tabela
+        col1, col2, col3 = st.columns([1, 6, 3])
+        col1.write("**#**")
+        col2.write("**Objetivo**")
+        col3.write("*Edição e Exclusão*")
+
+        # Loop para cada objetivo adicionado
+        for i, objetivo in enumerate(st.session_state["objetivos_especificos"]):
+            # Criamos uma nova linha em colunas
+            c1, c2, c3 = st.columns([1, 6, 3])
+            c1.write(f"{i + 1}")
+            c2.write(objetivo)  # exibe o texto do objetivo
+
+            # Na terceira coluna, colocamos botões: Editar (via popover) e Remover
+            with c3:
+                col_edit, col_remove = st.columns([1, 1])
+                with col_edit:
+                    # 2.1) Botão/Popover de Edição
+                    with st.popover(label=f"✏️"):
+                        st.subheader(f"Editar Objetivo {i+1}")
+                        novo_texto = st.text_area("Texto do objetivo:", objetivo, key=f"edit_obj_{i}")
+                        if st.button("Salvar Edição", key=f"btn_save_edit_{i}"):
+                            st.session_state["objetivos_especificos"][i] = novo_texto
+                            st.rerun()
+                with col_remove:
+                    # 2.2) Botão de Remoção
+                    if st.button("🗑️", key=f"btn_remove_{i}"):
+                        del st.session_state["objetivos_especificos"][i]
+                        st.rerun()
+
+
+
+    # ---------------------------------------------------------
+    # 2) INTRODUÇÃO, JUSTIFICATIVA, METODOLOGIA e
+    #    DEMAIS INFORMAÇÕES
+    # ---------------------------------------------------------
+    # Aba de Introdução
     with tab_intro:
-        # exibir nome completo da iniciativa selecionada
         st.subheader("Introdução")
         st.session_state["introducao"] = st.text_area(
             "Texto de Introdução:",
@@ -494,6 +600,7 @@ with st.form("form_textos_resumo"):
             height=300
         )
 
+    # Aba de Justificativa
     with tab_justif:
         st.subheader("Justificativa")
         st.session_state["justificativa"] = st.text_area(
@@ -502,6 +609,7 @@ with st.form("form_textos_resumo"):
             height=300
         )
 
+    # Aba de Metodologia
     with tab_metod:
         st.subheader("Metodologia")
         st.session_state["metodologia"] = st.text_area(
@@ -510,453 +618,380 @@ with st.form("form_textos_resumo"):
             height=300
         )
 
-    # -------------------------------------------
-    # 3) DEMAIS INFORMAÇÕES
-    # -------------------------------------------
-    with tab_infos:
+    # Aba de Demais Informações
+    with tab_demandante:
         st.subheader("Demais Informações")
-        st.write("Edição de Informações do Setor Demandante.")
+        st.caption("Edição de Informações do Setor Demandante.")
 
-        # Garante que "demais_informacoes" é um dicionário
+        # Verifica se os dados existem no session_state, senão busca no banco
+        if not st.session_state.get("demais_informacoes"):
+            conn = sqlite3.connect(DB_PATH)
+            query = """
+                SELECT diretoria, coordenação_geral, coordenação, demandante
+                FROM td_dados_resumos_sei
+                WHERE id_resumo = ?
+                LIMIT 1
+            """
+            row = conn.execute(query, (nova_iniciativa,)).fetchone()
+            conn.close()
+
+            if row:
+                st.session_state["demais_informacoes"] = {
+                    "diretoria": row[0] or "",
+                    "coordenacao_geral": row[1] or "",
+                    "coordenacao": row[2] or "",
+                    "demandante": row[3] or ""
+                }
+            else:
+                st.session_state["demais_informacoes"] = {
+                    "diretoria": "",
+                    "coordenacao_geral": "",
+                    "coordenacao": "",
+                    "demandante": ""
+                }
+
+        # Garante que "demais_informacoes" é um dicionário válido
         if not isinstance(st.session_state["demais_informacoes"], dict):
             try:
                 st.session_state["demais_informacoes"] = json.loads(st.session_state["demais_informacoes"])
             except:
                 st.session_state["demais_informacoes"] = {}
 
-
-        # Lê do session_state (dict)
+        # Lê os valores do session_state (garantindo que não sejam None)
         di = st.session_state["demais_informacoes"].get("diretoria", "")
         cg = st.session_state["demais_informacoes"].get("coordenacao_geral", "")
         co = st.session_state["demais_informacoes"].get("coordenacao", "")
         dm = st.session_state["demais_informacoes"].get("demandante", "")
 
-        with st.form("form_demais_informacoes"):
-            diretoria_novo    = st.text_input("Diretoria:", value=di)
-            coord_geral_novo  = st.text_input("Coordenação Geral:", value=cg)
-            coord_novo        = st.text_input("Coordenação:", value=co)
-            demandante_novo   = st.text_input("Demandante (Sigla):", value=dm, disabled=True)
+        st.caption("Preencha os campos abaixo conforme necessário:")
+        diretoria_novo    = st.text_input("Diretoria:", value=di)
+        coord_geral_novo  = st.text_input("Coordenação Geral:", value=cg)
+        coord_novo        = st.text_input("Coordenação:", value=co)
+        demandante_novo   = st.text_input("Demandante (Sigla):", value=dm, disabled=True)
 
-            btn_demais = st.form_submit_button("Aplicar alterações")
-            if btn_demais:
-                st.session_state["demais_informacoes"]["diretoria"]         = diretoria_novo
-                st.session_state["demais_informacoes"]["coordenacao_geral"] = coord_geral_novo
-                st.session_state["demais_informacoes"]["coordenacao"]       = coord_novo
-                st.session_state["demais_informacoes"]["demandante"]        = demandante_novo
-                st.success("Demais informações atualizadas no session_state!")
+        # Atualiza session_state quando os valores forem alterados
+        if st.button("Salvar Informações do Demandante"):
+            st.session_state["demais_informacoes"] = {
+                "diretoria": diretoria_novo,
+                "coordenacao_geral": coord_geral_novo,
+                "coordenacao": coord_novo,
+                "demandante": demandante_novo
+            }
+            st.success("Informações do demandante atualizadas com sucesso!")
 
-    btn_textos = st.form_submit_button("Salvar")
-    if btn_textos:
-        st.success("Informações atualizadas na sessão.")
-        st.warning("Clique em 'Salvar Cadastro' no final da página para gravar no banco de dados.")
-        time.sleep(2)
-        st.rerun()
 
-st.divider()
 
-with tab_eixos:
-# -------------------------------------------
-# 4) EIXOS TEMÁTICOS
-# -------------------------------------------
-    # st.subheader("🗂️ Eixos Temáticos")
-    st.subheader("Eixos Temáticos")
+    with tab_eixos:
+        # -------------------------------------------
+        # 4) EIXOS TEMÁTICOS - Seleção de Ações
+        # -------------------------------------------
+        st.subheader("Eixos Temáticos")
 
-    eixos_opcoes = get_options_from_table("td_samge_processos", "id_p", "nome")
+        eixos_opcoes = get_options_from_table("td_samge_processos", "id_p", "nome")
 
-    @st.cache_data
-    def calcular_estatisticas_eixo(eixo):
-        total_acoes = len(eixo.get("acoes_manejo", {}))
-        total_insumos = sum(len(x.get("insumos", [])) for x in eixo.get("acoes_manejo", {}).values())
-        total_valor = sum(sum(u.values()) for x in eixo.get("acoes_manejo", {}).values() for u in x.get("valor_ucs", {}).values())
-        return {"acoes": total_acoes, "insumos": total_insumos, "valor_total": total_valor}
+        # Novo eixo para adicionar
+        novo_eixo_id = st.selectbox(
+            "Escolha um Eixo (Processo SAMGe) para adicionar:",
+            options=[None] + sorted(eixos_opcoes.keys(), key=lambda x: eixos_opcoes[x]),
+            format_func=lambda x: eixos_opcoes.get(x, "Selecione..."),
+            key="sel_novo_eixo"
+        )
 
-    @st.cache_data
-    def get_acoes_opcoes():
-        return get_options_from_table("td_samge_acoes_manejo", "id_ac", "nome")
+       # Adicionar um novo eixo
+        if st.button("➕ Adicionar Eixo Temático", key="btn_add_eixo"):
+            if novo_eixo_id is None:
+                st.warning("Selecione um eixo válido antes de adicionar.")
+            else:
+                eixo_id_int = int(novo_eixo_id)
+                ids_existentes = [int(e["id_eixo"]) for e in st.session_state["eixos_tematicos"]]
+                if eixo_id_int not in ids_existentes:
+                    novo_eixo = {
+                        "id_eixo": eixo_id_int,
+                        "nome_eixo": eixos_opcoes.get(str(novo_eixo_id), "Novo Eixo"),
+                        "acoes_manejo": {}
+                    }
+                    st.session_state["eixos_tematicos"].append(novo_eixo)
 
-    acoes_opcoes = get_acoes_opcoes()
+                    # ✅ Força atualização dos insumos ao adicionar novo eixo
+                    st.session_state["insumos"] = {}  # Reseta os insumos para recalcular
 
-    @st.dialog("Edição do Eixo Temático", width="large")
-    def editar_eixo_dialog(index_eixo):
-        if not (0 <= index_eixo < len(st.session_state["eixos_tematicos"])):
-            st.warning("Índice de Eixo Temático fora do intervalo.")
-            return
-
-        eixo = st.session_state["eixos_tematicos"][index_eixo]
-        st.subheader(f"Editando: {eixo.get('nome_eixo', '(sem nome)')}")
-
-        show_insumos_key = f"show_insumos_{index_eixo}"
-        if show_insumos_key not in st.session_state:
-            st.session_state[show_insumos_key] = False
-
-        # 4.1) Passo 1: Selecionar Ações
-        with st.form(f"form_acoes_{index_eixo}", clear_on_submit=False):
-            st.write("**Selecione as ações de manejo associadas ao Eixo.**")
-            acoes_dict = get_options_from_table(
-                "td_samge_acoes_manejo", "id_ac", "nome",
-                filter_col="processo_id", filter_val=eixo["id_eixo"]
-            )
-
-            acoes_df = pd.DataFrame([
-                {
-                    "ID": ac_id,
-                    "Ação": nome,
-                    "Selecionado": ac_id in eixo["acoes_manejo"]
-                }
-                for ac_id, nome in acoes_dict.items()
-            ])
-            if "Selecionado" not in acoes_df.columns:
-                acoes_df["Selecionado"] = False
-
-            edited_acoes = st.data_editor(
-                acoes_df,
-                column_config={
-                    "ID": st.column_config.TextColumn(disabled=True),
-                    "Ação": st.column_config.TextColumn(disabled=True),
-                    "Selecionado": st.column_config.CheckboxColumn("Selecionar")
-                },
-                hide_index=True,
-                use_container_width=True,
-                key=f"editor_acoes_{index_eixo}"
-            )
-
-            btn_acoes = st.form_submit_button("Avançar")
-            if btn_acoes:
-                if "Selecionado" in edited_acoes.columns:
-                    novas_acoes = edited_acoes.loc[edited_acoes["Selecionado"], "ID"].tolist()
+                    st.rerun()
                 else:
-                    novas_acoes = []
+                    st.info("Este eixo já está na lista.")
 
-                st.session_state[f"acoes_selecionadas_{index_eixo}"] = novas_acoes
 
-                # Remove as não selecionadas
-                for ac_salvo in list(eixo["acoes_manejo"].keys()):
-                    if ac_salvo not in novas_acoes:
-                        del eixo["acoes_manejo"][ac_salvo]
 
-                # Cria as novas
-                for ac_id in novas_acoes:
-                    if ac_id not in eixo["acoes_manejo"]:
-                        eixo["acoes_manejo"][ac_id] = {"insumos": [], "valor_ucs": {}}
+        # Exibir expanders para cada eixo adicionado
+        for i, eixo in enumerate(st.session_state["eixos_tematicos"]):
+            with st.expander(f"📌 {eixo['nome_eixo']}", expanded=False):
+                # Carregar ações disponíveis
+                acoes_dict = get_options_from_table(
+                    "td_samge_acoes_manejo", "id_ac", "nome",
+                    filter_col="processo_id", filter_val=eixo["id_eixo"]
+                )
 
-                st.session_state["eixos_tematicos"][index_eixo] = eixo
-                st.session_state[show_insumos_key] = True
-                st.rerun()
+                # Criar DataFrame para edição
+                acoes_df = pd.DataFrame([
+                    {"ID": ac_id, "Ação": nome, "Selecionado": ac_id in eixo.get("acoes_manejo", {})}
+                    for ac_id, nome in acoes_dict.items()
+                ])
+                if "Selecionado" not in acoes_df.columns:
+                    acoes_df["Selecionado"] = False
 
-        # 4.2) Passo 2: Selecionar Insumos
-        novas_acoes = st.session_state.get(f"acoes_selecionadas_{index_eixo}", [])
-        if st.session_state[show_insumos_key] and novas_acoes:
-            conn = sqlite3.connect(DB_PATH)
-            df_insumos_all = pd.read_sql_query("SELECT id, descricao_insumo, elemento_despesa, especificacao_padrao FROM td_insumos", conn)
-            conn.close()
-
-            # Filtros no session
-            elem_key = f"filtro_elem_{index_eixo}"
-            spec_key = f"filtro_spec_{index_eixo}"
-            if elem_key not in st.session_state:
-                st.session_state[elem_key] = ""
-            if spec_key not in st.session_state:
-                st.session_state[spec_key] = ""
-
-            elem_filter = st.session_state[elem_key]
-            spec_filter = st.session_state[spec_key]
-
-            # Cross-filter local
-            df_elem = df_insumos_all
-            if elem_filter:
-                df_elem = df_elem[df_elem["elemento_despesa"] == elem_filter]
-            espec_possiveis = sorted(df_elem["especificacao_padrao"].dropna().unique())
-            if spec_filter and spec_filter not in espec_possiveis:
-                spec_filter = ""
-                st.session_state[spec_key] = ""
-
-            df_spec = df_insumos_all
-            if spec_filter:
-                df_spec = df_spec[df_spec["especificacao_padrao"] == spec_filter]
-            elem_possiveis = sorted(df_spec["elemento_despesa"].dropna().unique())
-            if elem_filter and elem_filter not in elem_possiveis:
-                elem_filter = ""
-                st.session_state[elem_key] = ""
-
-            with st.expander("🔍 Filtros de Insumos", expanded=True):
-                col_f1, col_f2 = st.columns(2)
-                with col_f1:
-                    novo_elem = st.selectbox(
-                        "Filtrar por elemento de despesa:",
-                        options=[""] + elem_possiveis,
-                        index=([""] + elem_possiveis).index(elem_filter)
-                    )
-                with col_f2:
-                    novo_spec = st.selectbox(
-                        "Filtrar por especificação padrão:",
-                        options=[""] + espec_possiveis,
-                        index=([""] + espec_possiveis).index(spec_filter)
-                    )
-
-            # Se combos mudaram
-            if (novo_elem != elem_filter) or (novo_spec != spec_filter):
-                st.session_state[elem_key] = novo_elem
-                st.session_state[spec_key] = novo_spec
-                st.rerun()
-
-            # Define subset final
-            df_filter = df_insumos_all.copy()
-            if st.session_state[elem_key]:
-                df_filter = df_filter[df_filter["elemento_despesa"] == st.session_state[elem_key]]
-            if st.session_state[spec_key]:
-                df_filter = df_filter[df_filter["especificacao_padrao"] == st.session_state[spec_key]]
-
-            with st.form(f"form_insumos_{index_eixo}", clear_on_submit=False):
-                st.write("**Selecione os insumos para cada ação**")
-
-                for ac_id in novas_acoes:
-                    st.markdown(f"### Ação: {acoes_opcoes.get(ac_id, 'Ação Desconhecida')}")
-
-                    ac_data = eixo["acoes_manejo"].get(ac_id, {"insumos": [], "valor_ucs": {}})
-
-                    # Marcar insumos selecionados
-                    sel_ids = set(ac_data["insumos"])
-                    df_sel = df_insumos_all[df_insumos_all["id"].isin(sel_ids)]
-
-                    df_combo = pd.concat([df_filter, df_sel]).drop_duplicates(subset=["id"])
-                    df_combo["Selecionado"] = df_combo["id"].apply(lambda x: x in sel_ids)
-
-                    # Remove colunas extras do editor
-                    for c_rm in ["elemento_despesa", "especificacao_padrao"]:
-                        if c_rm in df_combo.columns:
-                            df_combo.drop(columns=[c_rm], inplace=True)
-
-                    df_combo.rename(columns={
-                        "id": "ID",
-                        "descricao_insumo": "Insumo"
-                    }, inplace=True)
-
-                    edited_ins = st.data_editor(
-                        df_combo,
+                with st.form(f"form_acoes_{i}"):
+                    edited_acoes = st.data_editor(
+                        acoes_df,
                         column_config={
                             "ID": st.column_config.TextColumn(disabled=True),
-                            "Insumo": st.column_config.TextColumn(disabled=True),
+                            "Ação": st.column_config.TextColumn(disabled=True),
                             "Selecionado": st.column_config.CheckboxColumn("Selecionar")
                         },
                         hide_index=True,
                         use_container_width=True,
-                        key=f"editor_ins_{ac_id}"
+                        key=f"editor_acoes_{i}"
                     )
 
-                    insumos_final = edited_ins.loc[edited_ins["Selecionado"], "ID"].tolist()
-                    ac_data["insumos"] = insumos_final
-                    eixo["acoes_manejo"][ac_id] = ac_data
+                    if st.form_submit_button("Salvar Ações"):
+                        # Atualiza as ações selecionadas no eixo
+                        selecionadas = edited_acoes.loc[edited_acoes["Selecionado"], "ID"].tolist()
+                        eixo["acoes_manejo"] = {ac_id: {"insumos": []} for ac_id in selecionadas}
+                        st.session_state["eixos_tematicos"][i] = eixo
+                        st.success("Ações atualizadas!")
 
-                btn_insumos = st.form_submit_button("Salvar Insumos")
-                if btn_insumos:
-                    st.session_state["eixos_tematicos"][index_eixo] = eixo
-                    st.success("Insumos atualizados com sucesso!")
-                    st.toast("Insumos atualizados!", icon="✅")
-                    time.sleep(1)
+                # Botão para excluir eixo
+                if st.button("🗑️ Excluir Eixo", key=f"btn_del_{i}"):
+                    del st.session_state["eixos_tematicos"][i]
                     st.rerun()
 
-        if st.button("Fechar e Voltar", key=f"btn_fechar_{index_eixo}"):
-            st.session_state.modal_fechado = True
-            st.rerun()
+    # -------------------------------------------
+    # 5) INSUMOS - Seleção de Insumos por Ação
+    # -------------------------------------------
+    with tab_insumos:
+        st.subheader("Insumos por Ação")
 
-    # -----------------------------------------------------------------------------
-    # Modal de Edição de Valores por Unidade
-    # -----------------------------------------------------------------------------
+        for i, eixo in enumerate(st.session_state["eixos_tematicos"]):
+            with st.expander(f"📌 {eixo['nome_eixo']}", expanded=False):
+                # Percorremos as ações daquele eixo
+                for ac_id, ac_data in eixo["acoes_manejo"].items():
+                    st.markdown(
+                        f"### Ação: {get_options_from_table('td_samge_acoes_manejo', 'id_ac', 'nome').get(ac_id, 'Ação Desconhecida')}"
+                    )
 
-    # Modal de Edição de Valores por Unidade
-    @st.dialog("Editar Valores por Unidade", width="large")
-    def editar_valores_unidade(index_eixo):
-        if not (0 <= index_eixo < len(st.session_state["eixos_tematicos"])):
-            st.warning("Índice de Eixo Temático fora do intervalo.")
-            return
+                    # 1) Carregar insumos disponíveis do banco
+                    conn = sqlite3.connect(DB_PATH)
+                    df_insumos_all = pd.read_sql_query(
+                        "SELECT id, descricao_insumo FROM td_insumos",
+                        conn
+                    )
+                    conn.close()
 
-        eixo = st.session_state["eixos_tematicos"][index_eixo]
-        st.subheader(f"Edição de Valores - {eixo.get('nome_eixo', '(Sem Nome)')}")
+                    # 2) Renomear colunas internamente para "ID" e "Insumo"
+                    #    (Assim evitamos o KeyError e podemos usar "ID" diretamente)
+                    df_combo = df_insumos_all.rename(
+                        columns={
+                            "id": "ID",
+                            "descricao_insumo": "Insumo"
+                        }
+                    )
 
-        id_iniciativa = st.session_state.get("sel_iniciativa")
-        if not id_iniciativa:
-            st.error("Nenhuma iniciativa selecionada.")
-            return
+                    # 3) Marcar quais insumos já estão selecionados
+                    sel_ids = set(ac_data.get("insumos", []))
+                    df_combo["Selecionado"] = df_combo["ID"].apply(lambda x: x in sel_ids)
 
-        # Carregar unidades e valores alocados na iniciativa
+                    # 4) Exibir Data Editor num formulário
+                    with st.form(f"form_insumos_{i}_{ac_id}"):
+                        # Podemos configurar filtros nas colunas usando 'filter="text"' ou True
+                        edited_ins = st.data_editor(
+                            df_combo,
+                            column_config={
+                                "ID": st.column_config.TextColumn("Cód. Insumo", disabled=True),  # removemos `filter=...`
+                                "Insumo": st.column_config.TextColumn("Descrição do Insumo", disabled=True),
+                                "Selecionado": st.column_config.CheckboxColumn("Selecionar")       # removemos `filter=True`
+                            },
+                            hide_index=True,
+                            use_container_width=True,
+                            key=f"editor_ins_{i}_{ac_id}"
+                        )
+
+                        # 5) Salvamos insumos selecionados ao clicar
+                        if st.form_submit_button("Salvar Insumos"):
+                            # Agora "ID" de fato existe no DF
+                            selecionados = edited_ins.loc[edited_ins["Selecionado"], "ID"].tolist()
+                            ac_data["insumos"] = selecionados
+                            st.success("Insumos atualizados!")
+
+
+    # -------------------------------------------
+    # 6) UNIDADES DE CONSERVAÇÃO - Distribuição de Recursos
+    # -------------------------------------------
+    with tab_uc:
+        st.subheader("Distribuição de Recursos por Eixo")
+
+        # Conectar ao banco e buscar os dados corretos da tabela tf_cadastros_iniciativas
         conn = sqlite3.connect(DB_PATH)
         query = """
-            SELECT "Unidade de Conservação", "VALOR TOTAL ALOCADO"
+            SELECT 
+                "Unidade de Conservação" AS Unidade,
+                "AÇÃO DE APLICAÇÃO" AS Acao,
+                "VALOR TOTAL ALOCADO" AS "Valor Alocado"
             FROM tf_cadastros_iniciativas
             WHERE id_iniciativa = ?
+            AND "VALOR TOTAL ALOCADO" > 0
         """
-        df_unidades = pd.read_sql_query(query, conn, params=[id_iniciativa])
+        df_unidades = pd.read_sql_query(query, conn, params=[nova_iniciativa])
         conn.close()
 
         if df_unidades.empty:
-            st.info("Nenhuma unidade de conservação encontrada para esta iniciativa.")
-            return
-
-        df_unidades.rename(columns={"Unidade de Conservação": "Unidade", "VALOR TOTAL ALOCADO": "Valor Alocado"}, inplace=True)
-
-        # Recuperar valores editados anteriormente
-        valores_ucs = eixo.get("valor_ucs", {})
-
-        # Criar coluna "Novo Valor Alocado", mantendo valores editados
-        df_unidades["Novo Valor Alocado"] = df_unidades["Unidade"].apply(lambda x: valores_ucs.get(x, 0.0))
-
-        # Criar coluna "Saldo" antes de exibir o editor
-        df_unidades["Saldo"] = df_unidades["Valor Alocado"] - df_unidades["Novo Valor Alocado"]
-
-        # Toggle para copiar os valores da coluna "Valor Alocado"
-        copiar_valores = st.toggle("Copiar valores de 'Valor Alocado' para 'Novo Valor Alocado'", value=False)
-
-        # Se ativado, copia os valores da coluna "Valor Alocado"
-        if copiar_valores:
-            df_unidades["Novo Valor Alocado"] = df_unidades["Valor Alocado"]
-            df_unidades["Saldo"] = 0.0  
-
-        # Criar data editor com a coluna "Saldo"
-        edited_df = st.data_editor(
-            df_unidades,
-            column_config={
-                "Unidade": st.column_config.TextColumn(disabled=True),
-                "Valor Alocado": st.column_config.NumberColumn(disabled=True),
-                "Novo Valor Alocado": st.column_config.NumberColumn("Novo Valor Alocado", min_value=0.0),
-                "Saldo": st.column_config.NumberColumn("Saldo (Diferença)", disabled=True)
-            },
-            use_container_width=True,
-            key=f"editor_valores_{index_eixo}"
-        )
-
-        # Atualizar saldo após edição
-        edited_df["Saldo"] = edited_df["Valor Alocado"] - edited_df["Novo Valor Alocado"] # Calcula a diferença
-
-
-        # Salvar mudanças e atualizar saldo antes
-        if st.button("💾 Salvar Valores", key=f"btn_salvar_valores_{index_eixo}"):
-            # Recalcula o saldo antes de salvar
-            edited_df["Saldo"] = edited_df["Valor Alocado"] - edited_df["Novo Valor Alocado"]
-            
-            eixo["valor_ucs"] = {row["Unidade"]: row["Novo Valor Alocado"] for _, row in edited_df.iterrows() if row["Novo Valor Alocado"] > 0}
-
-            st.session_state["eixos_tematicos"][index_eixo] = eixo
-            st.success("Valores atualizados com sucesso!")
-            st.toast("Valores salvos!", icon="✅")
-            time.sleep(1)
-            st.rerun()
-
-
-        if st.button("❌ Fechar", key=f"btn_fechar_valores_{index_eixo}"):
-            st.session_state.modal_fechado = True
-            st.rerun()
-
-
-
-
-
-
-    # -----------------------------------------------------------------------------
-    # Adicionar Eixo Temático
-    # -----------------------------------------------------------------------------
-    novo_eixo_id = st.selectbox(
-        "Escolha um Eixo (Processo SAMGe) para adicionar:",
-        options=[None] + sorted(eixos_opcoes.keys(), key=lambda x: eixos_opcoes[x]),
-        format_func=lambda x: eixos_opcoes.get(x, "Selecione..."),
-        key="sel_novo_eixo"
-    )
-
-    if st.button("➕ Adicionar Eixo Temático", key="btn_add_eixo"):
-        if novo_eixo_id is None:
-            st.warning("Selecione um eixo válido antes de clicar em Adicionar Eixo Temático.")
+            st.warning("Nenhuma unidade de conservação encontrada para esta iniciativa.")
         else:
-            eixo_id_int = int(novo_eixo_id)
-            ids_existentes = [int(e["id_eixo"]) for e in st.session_state["eixos_tematicos"]]
-            if eixo_id_int not in ids_existentes:
-                st.session_state["eixos_tematicos"].append({
-                    "id_eixo": eixo_id_int,
-                    "nome_eixo": eixos_opcoes.get(str(novo_eixo_id), "Novo Eixo"),
-                    "acoes_manejo": {},
-                    "valor_ucs": {}
-                })
-                st.rerun()
+            # Define as colunas fixas iniciais
+            colunas_fixas = ["Unidade", "Acao", "Valor Alocado"]
+
+            # Ordena as colunas para garantir que os eixos apareçam na sequência correta
+            colunas_eixos = [eixo["nome_eixo"] for eixo in st.session_state["eixos_tematicos"]]
+            colunas_ordenadas = colunas_fixas + colunas_eixos + ["Saldo"]
+
+            # Inicializa session_state para armazenar os valores editados
+            if "df_uc_editado" not in st.session_state:
+                st.session_state["df_uc_editado"] = df_unidades.copy()
+
+            df_editavel = st.session_state["df_uc_editado"]
+
+            # Verifica se a coluna 'Valor Alocado' existe no DataFrame
+            if "Valor Alocado" in df_editavel.columns:
+                # Filtrar linhas com valores alocados > 0
+                df_editavel = df_editavel[df_editavel["Valor Alocado"] > 0]
             else:
-                st.info("Este eixo já existe na lista.")
+                st.warning("A coluna 'Valor Alocado' não foi encontrada no DataFrame.")
 
-    def calcular_valores_alocados(eixo):
-        """Calcula a soma dos valores editados e a contagem de unidades que receberam valores."""
-        if "valor_ucs" not in eixo or not eixo["valor_ucs"]:
-            return 0, 0  # Retorna (soma, quantidade) como zero se não houver dados
+            # Criar colunas dinâmicas para cada eixo adicionado
+            for eixo in st.session_state["eixos_tematicos"]:
+                eixo_nome = eixo["nome_eixo"]
+                if eixo_nome not in df_editavel.columns:
+                    df_editavel[eixo_nome] = 0  # Inicializa com zero
 
-        soma_valores = sum(eixo["valor_ucs"].values())
-        qtd_unidades = len(eixo["valor_ucs"])
-        return soma_valores, qtd_unidades
+            # Verifica se a coluna 'Valor Alocado' existe no DataFrame
+            if "Valor Alocado" in df_editavel.columns:
+                # Criar coluna de saldo (inicialmente igual ao valor alocado)
+                df_editavel["Saldo"] = df_editavel["Valor Alocado"] - df_editavel[
+                    [eixo["nome_eixo"] for eixo in st.session_state["eixos_tematicos"]]
+                ].sum(axis=1)
+            else:
+                st.warning("A coluna 'Valor Alocado' não foi encontrada no DataFrame.")
 
-    # Lista de eixos criados
-    for i, eixo in enumerate(st.session_state["eixos_tematicos"]):
-        stats = calcular_estatisticas_eixo(eixo)
-        valor_total_alocado, unidades_com_valor = calcular_valores_alocados(eixo)
+            # Verifica se as colunas fixas existem no DataFrame antes de reordenar
+            for col in colunas_fixas + ["Saldo"]:
+                if col not in df_editavel.columns:
+                    df_editavel[col] = 0  # Inicializa com zero se não existir
 
-        with st.expander(f"📌 Eixo: {eixo['nome_eixo']}", expanded=False):
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Ações", stats["acoes"], border=True)
-            col2.metric("Insumos", stats["insumos"], border=True)
-            # col2.metric("Valor Total", f"R$ {stats['valor_total']:,.2f}", border=True)
-            col1.metric("Total Alocado", f"R$ {valor_total_alocado:,.2f}", border=True)
-            col2.metric("Unidades Beneficiadas", unidades_com_valor, border=True)
+            # Reordena as colunas no DataFrame antes de exibir no `data_editor`
+            df_editavel = df_editavel[colunas_ordenadas]
 
+            # Criar um formulário para o botão "Verificar Saldos"
+            with st.form("form_uc"):
+                edited_df = st.data_editor(
+                    df_editavel,
+                    column_config={
+                        "Unidade": st.column_config.TextColumn(disabled=True),
+                        "Acao": st.column_config.TextColumn("Ação de Aplicação", disabled=True),
+                        "Valor Alocado": st.column_config.NumberColumn(disabled=True),
+                        "Saldo": st.column_config.NumberColumn("Saldo", disabled=True)
+                    },
+                    use_container_width=True,
+                    key="editor_uc",
+                    hide_index=True,
+                )
 
-            with col3:
-                # col_edit, col_del = st.columns(2)
-                if st.button("▪️ Editar Ações e Insumos", key=f"btn_edit_{i}", use_container_width=True, type='secondary'):
-                    st.session_state["modo_editar_eixo"] = i
-                    st.session_state.modal_fechado = False
-                    st.rerun()
-                # botão para abrir o modal de edição de valores por uc
-                if st.button("▪️ Editar Valores por Unidade", key=f"btn_edit_uc_{i}", use_container_width=True, type='secondary'):
-                   st.session_state["modo_editar_uc"] = i
-                   st.session_state.modal_fechado = False
-                   st.rerun()
+                # Botão para verificar os saldos dentro do formulário
+                if st.form_submit_button("Verificar Saldos"):
+                    for eixo in st.session_state["eixos_tematicos"]:
+                        eixo_nome = eixo["nome_eixo"]
+                        if eixo_nome in edited_df.columns:
+                            df_editavel[eixo_nome] = edited_df[eixo_nome]  # Atualiza valores por eixo
 
-                if st.button("🗑️ Excluir Eixo", key=f"btn_del_{i}", use_container_width=True, type='tertiary'):
-                    st.session_state["eixos_tematicos"].pop(i)
-                    st.rerun()
+                    # Recalcula saldo por unidade
+                    df_editavel["Saldo"] = df_editavel["Valor Alocado"] - df_editavel[
+                        [eixo["nome_eixo"] for eixo in st.session_state["eixos_tematicos"]]
+                    ].sum(axis=1)
 
-    # Verifica qual modal precisa ser aberto e garante que o correto seja acionado
-    modo_idx_valores = st.session_state.get("modo_editar_uc")
-    modo_idx_eixo = st.session_state.get("modo_editar_eixo")
+                    # Atualiza session state com os novos valores
+                    st.session_state["df_uc_editado"] = df_editavel.copy()
 
-    if not st.session_state.get("modal_fechado", True):
-        if modo_idx_valores is not None and 0 <= modo_idx_valores < len(st.session_state["eixos_tematicos"]):
-            editar_valores_unidade(modo_idx_valores)
-            st.session_state["modo_editar_uc"] = None  # Resetar após uso
-            st.stop()
-        elif modo_idx_eixo is not None and 0 <= modo_idx_eixo < len(st.session_state["eixos_tematicos"]):
-            editar_eixo_dialog(modo_idx_eixo)
-            st.session_state["modo_editar_eixo"] = None  # Resetar após uso
-            st.stop()
-
-    # Se nenhum modal for acionado, resetamos os estados
-    st.session_state["modo_editar_eixo"] = None
-    st.session_state["modo_editar_uc"] = None
+                    st.success("Distribuição de recursos atualizada!")
 
 
 
+    # botão do form para salvar os dados editados na sessão
+    if st.form_submit_button("Salvar Alterações"):
 
+
+        # Verificação prévia antes de salvar
+        if not st.session_state["objetivo_geral"]:
+            st.error("O campo 'Objetivo Geral' não pode estar vazio.")
+        elif not st.session_state["objetivos_especificos"]:
+            st.error("A lista de 'Objetivos Específicos' não pode estar vazia.")
+        elif not st.session_state["introducao"]:
+            st.error("O campo 'Introdução' não pode estar vazio.")
+        elif not st.session_state["justificativa"]:
+            st.error("O campo 'Justificativa' não pode estar vazio.")
+        elif not st.session_state["metodologia"]:
+            st.error("O campo 'Metodologia' não pode estar vazio.")
+        else:
+            # salvar objetivos geral e específicos
+            st.session_state["objetivo_geral"] = st.session_state["objetivo_geral"]
+
+
+            # salvar textos
+            st.session_state["introducao"] = st.session_state["introducao"]
+            st.session_state["justificativa"] = st.session_state["justificativa"]
+            st.session_state["metodologia"] = st.session_state["metodologia"]
+
+            # salvar demais informações
+            st.session_state["demais_informacoes"] = {
+            "diretoria": diretoria_novo,
+            "coordenacao_geral": coord_geral_novo,
+            "coordenacao": coord_novo,
+            "demandante": demandante_novo
+            }
+
+            # salvar eixos temáticos
+            st.session_state["eixos_tematicos"] = st.session_state["eixos_tematicos"]
+
+            # salvar insumos
+            if "insumos" not in st.session_state:
+                st.session_state["insumos"] = {}
+            else:
+                st.session_state["insumos"] = st.session_state["insumos"]
+
+            # salvar unidades de conservação
+            st.session_state["df_uc_editado"] = st.session_state["df_uc_editado"]
+
+            st.success("Alterações salvas com sucesso!")
+
+        st.success("Alterações salvas com sucesso!")
+
+
+# -------------------------------------------
+# BOTÃO FINAL PARA SALVAR CADASTRO
+# -------------------------------------------
+st.divider()
 col1, col2, col3 = st.columns(3)
 with col2:
-    if st.button("💾 Salvar Cadastro", key="btn_salvar_geral"):
+    if st.button("📝 Finalizar Cadastro", key="btn_salvar_geral"):
         salvar_dados_iniciativa(
-            id_iniciativa       = nova_iniciativa,
-            usuario             = cpf_usuario,
-            objetivo_geral      = st.session_state["objetivo_geral"],
-            objetivos_especificos = st.session_state["objetivos_especificos"],
-            eixos_tematicos     = st.session_state["eixos_tematicos"],
-            introducao          = st.session_state["introducao"],
-            justificativa       = st.session_state["justificativa"],
-            metodologia         = st.session_state["metodologia"],
-            demais_informacoes  = st.session_state["demais_informacoes"]
+            id_iniciativa=nova_iniciativa,
+            usuario=cpf_usuario,
+            objetivo_geral=st.session_state["objetivo_geral"],
+            objetivos_especificos=st.session_state["objetivos_especificos"],
+            eixos_tematicos=st.session_state["eixos_tematicos"],
+            introducao=st.session_state["introducao"],
+            justificativa=st.session_state["justificativa"],
+            metodologia=st.session_state["metodologia"],
+            demais_informacoes=st.session_state["demais_informacoes"]
         )
         st.success("✅ Cadastro atualizado com sucesso!")
-        st.toast("Cadastro atualizado com sucesso!")
-        time.sleep(2)
-        st.session_state["modo_editar_eixo"] = None
-        st.rerun()
+
+
 
 
 

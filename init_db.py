@@ -26,6 +26,7 @@ def init_database():
 
 
     # 📌 Criar tabela de usuários
+    cursor.execute(""" DROP TABLE IF EXISTS tf_usuarios """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tf_usuarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,7 +75,12 @@ def init_database():
     df_base = df_base[colunas_base]
 
     # 📌 Criando a tabela fixa `td_dados_base_iniciativas` (somente consulta)
+    cursor.execute(""" DROP TABLE IF EXISTS td_dados_base_iniciativas """)
     df_base.to_sql("td_dados_base_iniciativas", conn, if_exists="replace", index=False)
+
+
+
+
 
     # 📌 Carregando os dados do Excel a partir da Planilha1
     df_resumos = pd.read_excel(excel_path, sheet_name="Planilha1", engine="openpyxl")
@@ -112,11 +118,15 @@ def init_database():
     df_resumos.to_sql("td_dados_resumos_sei", conn, if_exists="replace", index=False)
 
     # 📌 Criando tabelas dimensão para armazenar IDs únicos
+    cursor.execute(""" DROP TABLE IF EXISTS td_demandantes """)
+    cursor.execute(""" DROP TABLE IF EXISTS td_iniciativas """)
+    cursor.execute(""" DROP TABLE IF EXISTS td_acoes_aplicacao """)
     cursor.execute("CREATE TABLE IF NOT EXISTS td_demandantes (id_demandante INTEGER PRIMARY KEY AUTOINCREMENT, nome_demandante TEXT UNIQUE)")
     cursor.execute("CREATE TABLE IF NOT EXISTS td_iniciativas (id_iniciativa INTEGER PRIMARY KEY AUTOINCREMENT, nome_iniciativa TEXT UNIQUE)")
     cursor.execute("CREATE TABLE IF NOT EXISTS td_acoes_aplicacao (id_acao INTEGER PRIMARY KEY AUTOINCREMENT, nome_acao TEXT UNIQUE)")
 
     # 📌 Criando `td_unidades` com `CNUC` como chave primária
+    cursor.execute(""" DROP TABLE IF EXISTS td_unidades """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS td_unidades (
             cnuc TEXT PRIMARY KEY,
@@ -129,6 +139,7 @@ def init_database():
     """)
 
     # 📌 Criando a tabela fato `tf_cadastros_iniciativas`
+    cursor.execute(""" DROP TABLE IF EXISTS tf_cadastros_iniciativas """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tf_cadastros_iniciativas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,7 +170,7 @@ def init_database():
             usuario TEXT NOT NULL,
             data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             objetivo_geral TEXT NOT NULL, 
-            objetivo_especifico TEXT NOT NULL, -- JSON contendo os objetivos específicos
+            objetivos_especificos TEXT NOT NULL, -- JSON contendo os objetivos específicos
             introducao TEXT,
             justificativa TEXT,
             metodologia TEXT,
@@ -296,6 +307,7 @@ def init_samge_database():
     cursor = conn.cursor()
 
     # 📌 Criando tabela de Macroprocessos
+    cursor.execute(""" DROP TABLE IF EXISTS td_samge_macroprocessos """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS td_samge_macroprocessos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -306,6 +318,7 @@ def init_samge_database():
     """)
 
     # 📌 Criando tabela de Processos
+    cursor.execute(""" DROP TABLE IF EXISTS td_samge_processos """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS td_samge_processos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -319,6 +332,7 @@ def init_samge_database():
     """)
 
     # 📌 Criando tabela de Ações de Manejo
+    cursor.execute(""" DROP TABLE IF EXISTS td_samge_acoes_manejo """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS td_samge_acoes_manejo (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -333,6 +347,7 @@ def init_samge_database():
     """)
 
     # 📌 Criando tabela de Atividades
+    cursor.execute(""" DROP TABLE IF EXISTS td_samge_atividades """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS td_samge_atividades (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
