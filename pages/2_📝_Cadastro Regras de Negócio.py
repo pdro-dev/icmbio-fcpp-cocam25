@@ -1049,22 +1049,27 @@ with st.form("form_textos_resumo"):
             }
             st.session_state["df_formas_contratacao"] = pd.DataFrame(data)
 
-        # 2) Exibir no data_editor, permitindo ao usuário marcar/desmarcar cada forma
-        df_editor = st.data_editor(
-            st.session_state["df_formas_contratacao"],
-            column_config={
-                "Forma de Contratação": st.column_config.TextColumn(disabled=True),
-                "Selecionado": st.column_config.CheckboxColumn("Selecionar")
-            },
-            hide_index=True,
-            key="formas_editor"
-        )
 
-        # 3) Atualizar o DF no session_state com possíveis alterações de checkbox
-        st.session_state["df_formas_contratacao"] = df_editor.copy()
+        with st.form("form_formas_contratacao"):
+            # 2) Exibir no data_editor, permitindo ao usuário marcar/desmarcar cada forma
+            df_editor = st.data_editor(
+                st.session_state["df_formas_contratacao"],
+                column_config={
+                    "Forma de Contratação": st.column_config.TextColumn(disabled=True),
+                    "Selecionado": st.column_config.CheckboxColumn("Selecionar")
+                },
+                hide_index=True,
+                key="formas_editor"
+            )
 
-        # 4) Identificar quais formas foram selecionadas
-        selected_forms = df_editor.loc[df_editor["Selecionado"], "Forma de Contratação"].tolist()
+            # 3) Atualizar o DF no session_state com possíveis alterações de checkbox
+            st.session_state["df_formas_contratacao"] = df_editor.copy()
+
+            # 4) Identificar quais formas foram selecionadas
+            selected_forms = df_editor.loc[df_editor["Selecionado"], "Forma de Contratação"].tolist()
+
+            if st.form_submit_button("Salvar Formas Selecionadas"):
+                st.success("Seleção registrada com sucesso!")
 
         st.divider()
 
