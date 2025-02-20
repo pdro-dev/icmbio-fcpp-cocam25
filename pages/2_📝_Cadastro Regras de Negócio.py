@@ -924,6 +924,34 @@ with st.form("form_textos_resumo"):
                 if st.session_state["df_uc_editado"].empty:
                     st.session_state["df_uc_editado"] = df_unidades_raw.copy()
 
+
+            def recalcular_saldo():
+                data_dict = st.session_state["editor_uc"]  # Deltas do data_editor
+                df_master = st.session_state["df_uc_editado"].copy()
+
+                # Exemplo debug
+                # st.write("Delta do data_editor:", data_dict)
+
+                # Mescla as edições
+                edited_rows = data_dict.get("edited_rows", {})
+                for row_idx_str, changed_cols in edited_rows.items():
+                    row_idx = int(row_idx_str)
+                    for col_name, new_value in changed_cols.items():
+                        df_master.loc[row_idx, col_name] = new_value
+
+                # Recalcula Saldo
+                df_master["Valor Alocado"] = pd.to_numeric(df_master["Valor Alocado"], errors="coerce").fillna(0)
+                for eixo_nome in colunas_eixos:
+                    if eixo_nome not in df_master.columns:
+                        df_master[eixo_nome] = 0
+                    df_master[eixo_nome] = pd.to_numeric(df_master[eixo_nome], errors="coerce").fillna(0)
+
+                df_master["Saldo Distribuído"] = df_master["Valor Alocado"] - df_master[colunas_eixos].sum(axis=1)
+
+                st.session_state["df_uc_editado"] = df_master
+
+
+
             # 4) Copiar para trabalhar localmente (sem perder o original no session_state)
             df_editavel = st.session_state["df_uc_editado"].copy()
 
@@ -939,48 +967,41 @@ with st.form("form_textos_resumo"):
                 if eixo_nome not in df_editavel.columns:
                     df_editavel[eixo_nome] = 0  # inicializa com zero
 
-            # 7) Criar/Atualizar a coluna de saldo
+            # 7) Criar/Atualizar a coluna de Saldo Distribuído
             # Antes, garantir que "Valor Alocado" seja numérico
             df_editavel["Valor Alocado"] = pd.to_numeric(df_editavel["Valor Alocado"], errors="coerce").fillna(0)
             # Também forçar eixos para numérico
             for eixo_nome in colunas_eixos:
                 df_editavel[eixo_nome] = pd.to_numeric(df_editavel[eixo_nome], errors="coerce").fillna(0)
 
-            # Calcula o saldo
-            df_editavel["Saldo"] = df_editavel["Valor Alocado"] - df_editavel[colunas_eixos].sum(axis=1)
+            # Calcula o Saldo Distribuído
+            df_editavel["Saldo Distribuído"] = df_editavel["Valor Alocado"] - df_editavel[colunas_eixos].sum(axis=1)
 
             # 8) Reordenar colunas para exibir no data_editor
-            colunas_ordenadas = colunas_fixas + colunas_eixos + ["Saldo"]
+            colunas_ordenadas = colunas_fixas + ["Saldo Distribuído"] + colunas_eixos # 
             df_editavel = df_editavel[colunas_ordenadas]
 
             # 9) Exibir formulário para editar os valores por eixo
-            with st.form("form_uc"):
-                edited_df = st.data_editor(
-                    df_editavel,
-                    column_config={
-                        "Unidade": st.column_config.TextColumn("Unidade de Conservação", disabled=True),
-                        "Acao": st.column_config.TextColumn("Ação de Aplicação", disabled=True),
-                        "Valor Alocado": st.column_config.NumberColumn("Valor Alocado", disabled=True),
-                        "Saldo": st.column_config.NumberColumn("Saldo", disabled=True)
-                    },
-                    use_container_width=True,
-                    key="editor_uc",
-                    hide_index=True,
+           
+            edited_df = st.data_editor(
+                df_editavel,
+                column_config={
+                    "Unidade": st.column_config.TextColumn("Unidade de Conservação", disabled=True),
+                    "Acao": st.column_config.TextColumn("Ação de Aplicação", disabled=True),
+                    "Valor Alocado": st.column_config.NumberColumn("Valor Alocado", disabled=True),
+                    "Saldo Distribuído": st.column_config.NumberColumn("Saldo Distribuído", disabled=True)
+                },
+                use_container_width=True,
+                key="editor_uc",
+                on_change=recalcular_saldo,
+                hide_index=True
                 )
 
-                # Botão para verificar e recalcular os saldos
-                if st.form_submit_button("Verificar Saldos"):
-                    # Converter cada eixo para numérico
-                    for eixo_nome in colunas_eixos:
-                        edited_df[eixo_nome] = pd.to_numeric(edited_df[eixo_nome], errors="coerce").fillna(0)
-
-                    # Recalcular o saldo
-                    edited_df["Saldo"] = edited_df["Valor Alocado"] - edited_df[colunas_eixos].sum(axis=1)
-
-                    # Armazenar resultado de volta no session_state
-                    st.session_state["df_uc_editado"] = edited_df.copy()
-
-                    st.success("Distribuição de recursos atualizada!")
+            # Se precisar de um botão p/ salvar no banco:
+            if st.button("Salvar Distribuição"):
+                df_final = st.session_state["df_uc_editado"]
+                st.write("Dados finais:", df_final)
+                # Aqui você faz o update no banco
 
 
 
