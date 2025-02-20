@@ -179,6 +179,8 @@ def init_database():
             acoes_manejo TEXT NOT NULL, -- JSON contendo as ações de manejo associadas a cada eixo temático
             insumos TEXT NOT NULL, -- JSON contendo os insumos vinculados às ações de manejo
             regra TEXT NOT NULL,               -- JSON consolidado de todos os dados configurados
+            distribuicao_ucs TEXT,
+            formas_contratacao TEXT,       
             FOREIGN KEY (id_iniciativa) REFERENCES td_iniciativas(id_iniciativa)
         )
     """)

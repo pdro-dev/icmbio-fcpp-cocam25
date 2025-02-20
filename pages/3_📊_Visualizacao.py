@@ -34,4 +34,7 @@ def app():
     df_filtrado = df[df["DEMANDANTE"] == demanda_selecionada]
     st.write(df_filtrado)
 
+
+    st.write(st.session_state)
+
 app()
