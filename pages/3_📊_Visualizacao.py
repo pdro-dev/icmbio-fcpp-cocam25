@@ -2,24 +2,20 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import json
+from fpdf import FPDF
+from io import BytesIO
+from datetime import datetime
 
-# Verifica se o usuário está logado
+# Verifica login
 if "usuario_logado" not in st.session_state or not st.session_state["usuario_logado"]:
     st.warning("🔒 Acesso negado! Faça login na página principal para acessar esta seção.")
     st.stop()
 
-st.title("Visualização de Regras de Negócio")
+st.title("📊 Visualização de Regras de Negócio")
 
+# Função para carregar dados
 def load_rules_by_setor(setor: str) -> pd.DataFrame:
-    """
-    Retorna os registros de regras de negócio em que o usuário (coluna 'usuario')
-    está em um setor correspondente ao 'setor_demandante' de tf_usuarios.
-    """
     conn = sqlite3.connect("database/app_data.db")
-    
-    # Consulta com JOIN entre tf_cadastro_regras_negocio e tf_usuarios
-    # para filtrar apenas registros cujo usuario = cpf na tf_usuarios,
-    # e setor_demandante = setor fornecido.
     query = """
     SELECT r.*
     FROM tf_cadastro_regras_negocio r
@@ -31,94 +27,194 @@ def load_rules_by_setor(setor: str) -> pd.DataFrame:
     conn.close()
     return df
 
-# Carrega apenas os registros do setor do usuário
-df_rules = load_rules_by_setor(st.session_state["setor"])
-
-# CSS para estilizar os cards (agora maiores)
+# CSS aprimorado para layout e consistência visual
 card_css = """
 <style>
 .card-container {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 30px;
-    margin-top: 20px;
-    justify-content: center; /* centraliza as linhas */
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(650px, 1fr));
+    gap: 25px;
+    padding: 20px;
 }
 .card {
-    background: linear-gradient(135deg, #1a1c20, #2c2f33);
-    border-radius: 12px;
-    padding: 30px;
-    color: #f0f0f0;
-    flex: 1 1 600px; /* base maior */
-    max-width: 800px; /* limite maior */
-    box-shadow: 0 6px 10px rgba(0,0,0,0.4);
-    transition: transform 0.2s ease-in-out;
-    margin: 0 auto;
+    background: #ffffff;
+    border-radius: 15px;
+    padding: 25px;
+    color: #333;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    border-left: 5px solid #00d1b2;
 }
 .card:hover {
-    transform: scale(1.02);
+    transform: translateY(-5px);
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
 }
 .card h3 {
     margin-top: 0;
-    font-size: 1.6em;
+    font-size: 1.8rem;
     color: #00d1b2;
 }
-.card p {
-    margin: 8px 0;
-    font-size: 1.05em;
-    line-height: 1.4;
+.card-section {
+    margin-bottom: 15px;
+    padding: 12px;
+    background: #f9f9f9;
+    border-radius: 8px;
+}
+.card-section-title {
+    font-weight: 600;
+    color: #00d1b2;
+    margin-bottom: 8px;
+    font-size: 1.1rem;
 }
 .badge {
-    background-color: #00d1b2;
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-size: 0.85em;
+    background: #00d1b233;
+    color: #00d1b2;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.9rem;
+    margin-right: 10px;
 }
 </style>
 """
 
 st.markdown(card_css, unsafe_allow_html=True)
-st.subheader(f"Regras de Negócio do Setor: {st.session_state['setor']}")
+
+# Carrega os dados do setor e define a variável df_rules antes de utilizá-la em outras partes
+df_rules = load_rules_by_setor(st.session_state["setor"])
+
+# Função para criar PDF com layout em tabela
+def create_pdf(df: pd.DataFrame):
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    
+    # Cabeçalho do PDF
+    pdf.cell(0, 10, f"Relatório de Regras de Negócio - {st.session_state['setor']}", 0, 1, 'C')
+    pdf.ln(5)
+    
+    pdf.set_font("Arial", size=10)
+    line_height = 8
+
+    # Para cada regra, exibe os dados em formato de tabela
+    for idx, row in df.iterrows():
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(0, 10, f"Regra {idx+1}", 0, 1)
+        pdf.set_font('Arial', 'B', 10)
+        
+        # Cria cabeçalho da tabela
+        headers = ["Campo", "Descrição"]
+        col_width = pdf.w / 2 - 20
+        
+        for header in headers:
+            pdf.cell(col_width, line_height, header, border=1, align='C')
+        pdf.ln(line_height)
+        
+        pdf.set_font('Arial', '', 10)
+        
+        # Função auxiliar para tratar campos JSON
+        def process_field(field):
+            try:
+                data = json.loads(field)
+                if isinstance(data, list):
+                    return "\n• " + "\n• ".join(data)
+                return str(data)
+            except Exception:
+                return str(field)
+        
+        # Lista de campos a serem exibidos
+        conteudo = [
+            ("Objetivo Geral", row['objetivo_geral']),
+            ("Objetivos Específicos", process_field(row['objetivos_especificos'])),
+            ("Introdução", row['introducao']),
+            ("Justificativa", row['justificativa']),
+            ("Metodologia", row['metodologia']),
+            ("Eixos Temáticos", process_field(row['eixos_tematicos'])),
+            ("Demais Informações", process_field(row['demais_informacoes'])),
+            ("Responsável", f"{row['usuario']} - {datetime.strptime(row['data_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')}")
+        ]
+        
+        # Adiciona cada linha da tabela
+        for campo, descricao in conteudo:
+            pdf.cell(col_width, line_height, campo, border=1)
+            x_current = pdf.get_x()
+            y_current = pdf.get_y()
+            pdf.multi_cell(col_width, line_height, descricao.encode('latin-1', 'replace').decode('latin-1'), border=1)
+            pdf.set_xy(x_current - col_width, pdf.get_y())
+            pdf.ln(line_height)
+        
+        pdf.ln(5)
+        pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
+        pdf.ln(8)
+    
+    return pdf
+
+# Botão para gerar PDF
+if st.button("📄 Gerar Relatório em PDF"):
+    with st.spinner("Gerando PDF..."):
+        pdf = create_pdf(df_rules)
+        pdf_bytes = pdf.output(dest="S").encode("latin-1")
+        st.download_button(
+            label="⬇️ Download do Relatório",
+            data=pdf_bytes,
+            file_name=f"relatorio_regras_{st.session_state['setor']}.pdf",
+            mime="application/pdf"
+        )
+
+# Exibição dos cards com as regras
+st.subheader(f"📂 Regras do Setor: {st.session_state['setor']}")
 
 if df_rules.empty:
-    st.info("Nenhuma regra de negócio encontrada para o seu setor.")
+    st.info("ℹ️ Nenhuma regra de negócio encontrada para o seu setor.")
 else:
     st.markdown("<div class='card-container'>", unsafe_allow_html=True)
     for idx, row in df_rules.iterrows():
-        # Tenta converter os campos que foram salvos em JSON
-        try:
-            objetivos = json.loads(row["objetivos_especificos"])
-        except Exception:
-            objetivos = row["objetivos_especificos"]
-        try:
-            eixos = json.loads(row["eixos_tematicos"])
-        except Exception:
-            eixos = row["eixos_tematicos"]
-        try:
-            demais = json.loads(row["demais_informacoes"])
-        except Exception:
-            demais = row["demais_informacoes"]
-
-        # Data/hora bruta do banco
-        data_str = str(row["data_hora"])
-
-        # Monta HTML do card
+        # Função para tratar campos JSON
+        def process_field(field):
+            try:
+                data = json.loads(field)
+                if isinstance(data, list):
+                    return "• " + "<br>• ".join(data)
+                return str(data)
+            except Exception:
+                return str(field)
+        
         card_html = f"""
         <div class="card">
             <h3>Regra {idx + 1}</h3>
-            <p><strong>Objetivo Geral:</strong> {row['objetivo_geral']}</p>
-            <p><strong>Objetivos Específicos:</strong> {objetivos}</p>
-            <p><strong>Introdução:</strong> {row['introducao']}</p>
-            <p><strong>Justificativa:</strong> {row['justificativa']}</p>
-            <p><strong>Metodologia:</strong> {row['metodologia']}</p>
-            <p><strong>Eixos Temáticos:</strong> {eixos}</p>
-            <p><strong>Demais Informações:</strong> {demais}</p>
-            <p><strong>Usuário (CPF):</strong> <span class="badge">{row['usuario']}</span></p>
-            <p><strong>Data:</strong> {data_str}</p>
+            <div class="card-section">
+                <div class="card-section-title">🎯 Objetivo Geral</div>
+                {row['objetivo_geral']}
+            </div>
+            <div class="card-section">
+                <div class="card-section-title">📌 Objetivos Específicos</div>
+                {process_field(row['objetivos_especificos'])}
+            </div>
+            <div class="card-section">
+                <div class="card-section-title">📖 Introdução</div>
+                {row['introducao']}
+            </div>
+            <div class="card-section">
+                <div class="card-section-title">📈 Justificativa</div>
+                {row['justificativa']}
+            </div>
+            <div class="card-section">
+                <div class="card-section-title">🔧 Metodologia</div>
+                {row['metodologia']}
+            </div>
+            <div class="card-section">
+                <div class="card-section-title">🗂️ Eixos Temáticos</div>
+                {process_field(row['eixos_tematicos'])}
+            </div>
+            <div class="card-section">
+                <div class="card-section-title">ℹ️ Demais Informações</div>
+                {process_field(row['demais_informacoes'])}
+            </div>
+            <div style="margin-top: 15px;">
+                <span class="badge">👤 Responsável: {row['usuario']}</span>
+                <span class="badge">📅 {datetime.strptime(row['data_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')}</span>
+            </div>
         </div>
         """
         st.markdown(card_html, unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
-
-# Se quiser exibir dados da sessão para debug, descomente:
-# st.write("Dados da sessão:", st.session_state)
