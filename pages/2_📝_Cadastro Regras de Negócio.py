@@ -131,7 +131,6 @@ def carregar_resumo_iniciativa(setor: str) -> pd.DataFrame | None:
         return None
     return df
 
-
 def salvar_dados_iniciativa(
     id_iniciativa: int,
     usuario: str,
@@ -178,7 +177,7 @@ def salvar_dados_iniciativa(
     objetivos_json = json.dumps(objetivos_especificos or [])
     eixos_json     = json.dumps(eixos_tematicos or [])
 
-    # Extrai lista de acoes e insumos a partir de eixos
+    # Extrai lista de ações e insumos a partir de eixos
     acoes_set   = set()
     insumos_set = set()
     for eixo in eixos_tematicos:
@@ -187,7 +186,7 @@ def salvar_dados_iniciativa(
             for ins_id in ac_data.get("insumos", []):
                 insumos_set.add(ins_id)
 
-    acoes_json  = json.dumps(list(acoes_set))
+    acoes_json   = json.dumps(list(acoes_set))
     insumos_json = json.dumps(list(insumos_set))
 
     # Regra consolidada
@@ -248,12 +247,11 @@ def salvar_dados_iniciativa(
         metodologia,
         demais_info_json,
         distribuicao_ucs_json,
-        formas_completo_json
+        formas_contratacao_json   # Alterado aqui
     ))
 
     conn.commit()
     conn.close()
-
 
 @st.cache_data
 def get_options_from_table(

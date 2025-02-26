@@ -12,20 +12,21 @@ def init_database():
     excel_path = "dados/base_iniciativas_resumos_sei.xlsx"
     db_path = "database/app_data.db"
 
+    # Credenciais do usuário admin (vêm do [Secrets] do Streamlit)
     admin_cpf = st.secrets["ADMIN_CPF"]
     admin_nome = st.secrets["ADMIN_NOME"]
     admin_email = st.secrets["ADMIN_EMAIL"]
     admin_setor = st.secrets["ADMIN_SETOR"]
     admin_perfil = st.secrets["ADMIN_PERFIL"]
 
-
     # 📌 Criando diretório do banco de dados se não existir
     os.makedirs("database", exist_ok=True)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-
-    # 📌 Criar tabela de usuários
+    # ----------------------------------------------------------------------------
+    # 1) TABELA DE USUÁRIOS
+    # ----------------------------------------------------------------------------
     cursor.execute(""" DROP TABLE IF EXISTS tf_usuarios """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tf_usuarios (
@@ -38,22 +39,22 @@ def init_database():
         )
     """)
 
-    # 📌 Criando um usuário "admin master" caso não exista
+    # Cria (ou ignora) um usuário admin master
     cursor.execute("""
         INSERT OR IGNORE INTO tf_usuarios (cpf, nome_completo, email, setor_demandante, perfil)
         VALUES (?, ?, ?, ?, ?)
     """, (admin_cpf, admin_nome, admin_email, admin_setor, admin_perfil))
 
-
-
-    # 📌 Carregando dados do JSON (dados base fixos)
+    # ----------------------------------------------------------------------------
+    # 2) LEITURA DA BASE JSON (df_base) E CRIAÇÃO DE TABELAS DE APOIO
+    # ----------------------------------------------------------------------------
     df_base = pd.read_json(json_path)
 
-    # 📌 Tratamento da coluna "Nº SEI"
+    # Converter "Nº SEI" para numérico, tratar "-" como NaN
     df_base["Nº SEI"] = df_base["Nº SEI"].astype(str).replace("-", np.nan)
     df_base["Nº SEI"] = pd.to_numeric(df_base["Nº SEI"], errors="coerce")
 
-    # 📌 Seleção das colunas desejadas
+    # Selecionar colunas relevantes
     colunas_base = [
         "DEMANDANTE",
         "Nome da Proposta/Iniciativa Estruturante",
@@ -71,29 +72,22 @@ def init_database():
         "BIOMA",
         "UF"
     ]
-    
     df_base = df_base[colunas_base]
 
-    # 📌 Criando a tabela fixa `td_dados_base_iniciativas` (somente consulta)
+    # Criar tabela fixa de consulta
     cursor.execute(""" DROP TABLE IF EXISTS td_dados_base_iniciativas """)
     df_base.to_sql("td_dados_base_iniciativas", conn, if_exists="replace", index=False)
 
-
-
-
-
-    # 📌 Carregando os dados do Excel a partir da Planilha1
+    # ----------------------------------------------------------------------------
+    # 3) LEITURA DA PLANILHA (EXCEL) COM RESUMOS SEI
+    # ----------------------------------------------------------------------------
     df_resumos = pd.read_excel(excel_path, sheet_name="Planilha1", engine="openpyxl")
-
-    # 📌 Removendo possíveis linhas completamente vazias
     df_resumos.dropna(how="all", inplace=True)
 
-    # 📌 Padronizando os nomes das colunas (removendo espaços e convertendo para minúsculas)
+    # Padroniza colunas (minúsculas, underscores)
     df_resumos.columns = [col.strip().lower().replace(" ", "_") for col in df_resumos.columns]
 
-
-
-    # 📌 Criar a tabela de resumos no banco de dados
+    # Cria tabela para armazenar resumos SEI
     cursor.execute(""" DROP TABLE IF EXISTS td_dados_resumos_sei """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS td_dados_resumos_sei (
@@ -111,21 +105,39 @@ def init_database():
             metodologia TEXT
         )
     """)
-
     conn.commit()
 
-    # 📌 Criando a tabela `td_dados_resumos_sei`
+    # Salva dados do Excel na tabela
     df_resumos.to_sql("td_dados_resumos_sei", conn, if_exists="replace", index=False)
 
-    # 📌 Criando tabelas dimensão para armazenar IDs únicos
+    # ----------------------------------------------------------------------------
+    # 4) CRIAÇÃO DAS TABELAS DIMENSÃO
+    # ----------------------------------------------------------------------------
     cursor.execute(""" DROP TABLE IF EXISTS td_demandantes """)
     cursor.execute(""" DROP TABLE IF EXISTS td_iniciativas """)
     cursor.execute(""" DROP TABLE IF EXISTS td_acoes_aplicacao """)
-    cursor.execute("CREATE TABLE IF NOT EXISTS td_demandantes (id_demandante INTEGER PRIMARY KEY AUTOINCREMENT, nome_demandante TEXT UNIQUE)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS td_iniciativas (id_iniciativa INTEGER PRIMARY KEY AUTOINCREMENT, nome_iniciativa TEXT UNIQUE)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS td_acoes_aplicacao (id_acao INTEGER PRIMARY KEY AUTOINCREMENT, nome_acao TEXT UNIQUE)")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS td_demandantes (
+            id_demandante INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome_demandante TEXT UNIQUE
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS td_iniciativas (
+            id_iniciativa INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome_iniciativa TEXT UNIQUE
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS td_acoes_aplicacao (
+            id_acao INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome_acao TEXT UNIQUE
+        )
+    """)
 
-    # 📌 Criando `td_unidades` com `CNUC` como chave primária
+    # ----------------------------------------------------------------------------
+    # 5) TABELA DE UNIDADES
+    # ----------------------------------------------------------------------------
     cursor.execute(""" DROP TABLE IF EXISTS td_unidades """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS td_unidades (
@@ -138,7 +150,9 @@ def init_database():
         )
     """)
 
-    # 📌 Criando a tabela fato `tf_cadastros_iniciativas`
+    # ----------------------------------------------------------------------------
+    # 6) TABELA FATO - tf_cadastros_iniciativas
+    # ----------------------------------------------------------------------------
     cursor.execute(""" DROP TABLE IF EXISTS tf_cadastros_iniciativas """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tf_cadastros_iniciativas (
@@ -154,6 +168,7 @@ def init_database():
             valor_iniciativa REAL,
             valor_total_iniciativa REAL,
             num_sei TEXT,
+            formas_contratacao TEXT,
             FOREIGN KEY (id_demandante) REFERENCES td_demandantes(id_demandante),
             FOREIGN KEY (id_iniciativa) REFERENCES td_iniciativas(id_iniciativa),
             FOREIGN KEY (id_acao) REFERENCES td_acoes_aplicacao(id_acao),
@@ -161,7 +176,9 @@ def init_database():
         )
     """)
 
-    # 📌 Criando a tabela `tf_cadastro_regras_negocio`
+    # ----------------------------------------------------------------------------
+    # 7) TABELA PRINCIPAL DE REGRAS DE NEGÓCIO
+    # ----------------------------------------------------------------------------
     cursor.execute(""" DROP TABLE IF EXISTS tf_cadastro_regras_negocio """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tf_cadastro_regras_negocio (
@@ -169,23 +186,27 @@ def init_database():
             id_iniciativa INTEGER NOT NULL,
             usuario TEXT NOT NULL,
             data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            objetivo_geral TEXT NOT NULL, 
-            objetivos_especificos TEXT NOT NULL, -- JSON contendo os objetivos específicos
-            introducao TEXT,
-            justificativa TEXT,
-            metodologia TEXT,
-            demais_informacoes TEXT, -- JSON contendo as demais informações
-            eixos_tematicos TEXT NOT NULL, -- JSON contendo os eixos temáticos por objetivo específico
-            acoes_manejo TEXT NOT NULL, -- JSON contendo as ações de manejo associadas a cada eixo temático
-            insumos TEXT NOT NULL, -- JSON contendo os insumos vinculados às ações de manejo
-            regra TEXT NOT NULL,               -- JSON consolidado de todos os dados configurados
-            distribuicao_ucs TEXT,
-            formas_contratacao TEXT,       
+
+            objetivo_geral TEXT NOT NULL,            -- Texto simples
+            objetivos_especificos TEXT NOT NULL,     -- JSON (lista de strings)
+            introducao TEXT NOT NULL,
+            justificativa TEXT NOT NULL,
+            metodologia TEXT NOT NULL,
+            demais_informacoes TEXT,                 -- JSON (dict)
+            eixos_tematicos TEXT NOT NULL,           -- JSON (lista de dicts)
+            acoes_manejo TEXT NOT NULL,              -- JSON (dict com ações)
+            insumos TEXT NOT NULL,                   -- JSON (dict ou lista com insumos)
+            regra TEXT NOT NULL,                     -- JSON consolidado (opcional)
+            distribuicao_ucs TEXT,                   -- JSON (DataFrame ou lista)
+            formas_contratacao TEXT,                 -- JSON (dict com detalhes)
+
             FOREIGN KEY (id_iniciativa) REFERENCES td_iniciativas(id_iniciativa)
         )
     """)
 
-    # 📌 Criando a tabela `td_insumos` 
+    # ----------------------------------------------------------------------------
+    # 8) TABELA DE INSUMOS
+    # ----------------------------------------------------------------------------
     cursor.execute(""" DROP TABLE IF EXISTS td_insumos """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS td_insumos (
@@ -198,81 +219,87 @@ def init_database():
             data_atualizacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-
     conn.commit()
 
-    # 📌 Inserindo valores únicos nas tabelas dimensão
+    # ----------------------------------------------------------------------------
+    # 9) POPULA AS TABELAS DIMENSÃO (demandantes, iniciativas, ações, unidades)
+    # ----------------------------------------------------------------------------
+    # Insere valores únicos
     for table, column, name_col in [
-        ("td_demandantes", "DEMANDANTE", "nome_demandante"), 
-        ("td_iniciativas", "Nome da Proposta/Iniciativa Estruturante", "nome_iniciativa"), 
+        ("td_demandantes", "DEMANDANTE", "nome_demandante"),
+        ("td_iniciativas", "Nome da Proposta/Iniciativa Estruturante", "nome_iniciativa"),
         ("td_acoes_aplicacao", "AÇÃO DE APLICAÇÃO", "nome_acao")
     ]:
         unique_values = df_base[column].dropna().unique()
         for value in unique_values:
             cursor.execute(f"INSERT OR IGNORE INTO {table} ({name_col}) VALUES (?)", (value,))
 
-    # 📌 Preenchendo `td_unidades`
+    # Popula td_unidades
     unidades_unicas = df_base[["CNUC", "Unidade de Conservação", "GR", "CATEGORIA UC", "BIOMA", "UF"]].drop_duplicates()
     for _, row in unidades_unicas.iterrows():
         cursor.execute("""
-            INSERT OR IGNORE INTO td_unidades (cnuc, nome_unidade, gr, categoria_uc, bioma, uf) 
+            INSERT OR IGNORE INTO td_unidades (cnuc, nome_unidade, gr, categoria_uc, bioma, uf)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (row["CNUC"], row["Unidade de Conservação"], row["GR"], row["CATEGORIA UC"], row["BIOMA"], row["UF"]))
+        """, (
+            row["CNUC"],
+            row["Unidade de Conservação"],
+            row["GR"],
+            row["CATEGORIA UC"],
+            row["BIOMA"],
+            row["UF"]
+        ))
 
     conn.commit()
 
-    # 📌 Criando mapeamento de IDs para referência
+    # ----------------------------------------------------------------------------
+    # 10) CRIA MAPEAMENTOS DE ID (p/ relacionar no tf_cadastros_iniciativas)
+    # ----------------------------------------------------------------------------
     id_maps = {}
     for table, column, id_col, name_col in [
-        ("td_demandantes", "DEMANDANTE", "id_demandante", "nome_demandante"), 
-        ("td_iniciativas", "Nome da Proposta/Iniciativa Estruturante", "id_iniciativa", "nome_iniciativa"), 
+        ("td_demandantes", "DEMANDANTE", "id_demandante", "nome_demandante"),
+        ("td_iniciativas", "Nome da Proposta/Iniciativa Estruturante", "id_iniciativa", "nome_iniciativa"),
         ("td_acoes_aplicacao", "AÇÃO DE APLICAÇÃO", "id_acao", "nome_acao")
     ]:
-        id_maps[table] = pd.read_sql_query(f"SELECT * FROM {table}", conn).set_index(name_col)[id_col].to_dict()
+        df_map = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+        id_maps[table] = df_map.set_index(name_col)[id_col].to_dict()
 
-    # 📌 Criando `tf_cadastros_iniciativas` com IDs e um ID único composto
+    # Preenche colunas ID na df_base
     df_base["id_demandante"] = df_base["DEMANDANTE"].map(id_maps["td_demandantes"]).fillna(-1)
     df_base["id_iniciativa"] = df_base["Nome da Proposta/Iniciativa Estruturante"].map(id_maps["td_iniciativas"]).fillna(-1)
     df_base["id_acao"] = df_base["AÇÃO DE APLICAÇÃO"].map(id_maps["td_acoes_aplicacao"]).fillna(-1)
 
+    # Salva na tabela fato
     df_base.to_sql("tf_cadastros_iniciativas", conn, if_exists="replace", index=False)
 
-
-    # ---------------------------------------------------------------------
-    # >>>       Inserindo insumos a partir do Excel base_insumos.xlsx    <<<
-    # ---------------------------------------------------------------------
+    # ----------------------------------------------------------------------------
+    # 11) CARREGA INSUMOS A PARTIR DO EXCEL base_insumos.xlsx
+    # ----------------------------------------------------------------------------
     try:
-        # 1) Lê o Excel com a base de insumos.
-        #    Ajuste o sheet_name caso não seja a primeira planilha.
-        df_raw = pd.read_excel("dados/base_insumos.xlsx", sheet_name=0)
+        excel_insumos_path = "dados/base_insumos.xlsx"
+        df_raw = pd.read_excel(excel_insumos_path, sheet_name=0)
 
-        # 2) Renomeia as colunas para bater com as do banco
-        #    Ajuste aqui para os nomes EXATOS que seu Excel tem.
-
-        # Garante que exista "Especificação Técnica (detalhamento)" mesmo que vazia
+        # Garante colunas mínimas
         if "Especificação Técnica (detalhamento)" not in df_raw.columns:
-            df_raw["Especificação Técnica (detalhamento)"] = "" 
+            df_raw["Especificação Técnica (detalhamento)"] = ""
 
-        df_insumos = df_raw.rename(
-            columns={
-                "Elemento de Despesa": "elemento_despesa",
-                "Especificação Padrão": "especificacao_padrao",
-                "Descrição do Insumo": "descricao_insumo",
-                "Especificação Técnica (detalhamento)": "especificacao_tecnica",
-                "Valor ATUALIZADO EM Dezembro/2024": "valor_referencia"
-            }
-        )
+        df_insumos = df_raw.rename(columns={
+            "Elemento de Despesa": "elemento_despesa",
+            "Especificação Padrão": "especificacao_padrao",
+            "Descrição do Insumo": "descricao_insumo",
+            "Especificação Técnica (detalhamento)": "especificacao_tecnica",
+            "Valor ATUALIZADO EM Dezembro/2024": "valor_referencia"
+        })
 
-        # 3) Converter valores numéricos (com vírgula) para float
+        # Ajusta valores numéricos
         df_insumos["valor_referencia"] = (
             df_insumos["valor_referencia"]
             .astype(str)
-            .str.replace(".", "")    # se seu Excel usa separador de milhar com ponto
-            .str.replace(",", ".")   # substitui vírgula decimal por ponto
+            .str.replace(".", "")   # remove milhar
+            .str.replace(",", ".")  # vírgula decimal -> ponto
         )
         df_insumos["valor_referencia"] = pd.to_numeric(df_insumos["valor_referencia"], errors="coerce").fillna(0.0)
 
-        # 4) Seleciona as colunas na ordem correta
+        # Seleciona colunas na ordem
         df_insumos = df_insumos[[
             "elemento_despesa",
             "especificacao_padrao",
@@ -280,16 +307,15 @@ def init_database():
             "especificacao_tecnica",
             "valor_referencia"
         ]]
-        # Renomeia "valor_referencia" -> "preco_referencia" (coluna do banco)
+
+        # Renomeia "valor_referencia" -> "preco_referencia"
         df_insumos.rename(columns={"valor_referencia": "preco_referencia"}, inplace=True)
 
-        # 5) Insere no banco (método "append" para não sobrescrever a tabela)
+        # Insere no banco (append)
         df_insumos.to_sql("td_insumos", conn, if_exists="append", index=False)
         print("✅ Tabela td_insumos populada com sucesso a partir do Excel!")
     except Exception as e:
         print("❌ Erro ao tentar popular td_insumos:", e)
-    # ---------------------------------------------------------------------
-
 
     conn.close()
     print("✅ Banco de dados inicializado com sucesso!")
@@ -308,7 +334,9 @@ def init_samge_database():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # 📌 Criando tabela de Macroprocessos
+    # ----------------------------------------------------------------------------
+    # Tabelas do SAMGe: Macroprocessos, Processos, Ações de Manejo, Atividades
+    # ----------------------------------------------------------------------------
     cursor.execute(""" DROP TABLE IF EXISTS td_samge_macroprocessos """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS td_samge_macroprocessos (
@@ -319,7 +347,6 @@ def init_samge_database():
         )
     """)
 
-    # 📌 Criando tabela de Processos
     cursor.execute(""" DROP TABLE IF EXISTS td_samge_processos """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS td_samge_processos (
@@ -333,7 +360,6 @@ def init_samge_database():
         )
     """)
 
-    # 📌 Criando tabela de Ações de Manejo
     cursor.execute(""" DROP TABLE IF EXISTS td_samge_acoes_manejo """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS td_samge_acoes_manejo (
@@ -348,7 +374,6 @@ def init_samge_database():
         )
     """)
 
-    # 📌 Criando tabela de Atividades
     cursor.execute(""" DROP TABLE IF EXISTS td_samge_atividades """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS td_samge_atividades (
@@ -365,36 +390,43 @@ def init_samge_database():
 
     conn.commit()
 
-    # 📌 Lendo o arquivo Excel
+    # Lê o Excel do SAMGe
     df = pd.read_excel(excel_path, engine="openpyxl")
 
-    # 🔹 Padronizando os nomes das colunas
+    # Padroniza colunas
     df.columns = df.columns.str.strip()
 
-    # 📌 Inserindo Macroprocessos
+    # ----------------------------------------------------------------------------
+    # Insere Macroprocessos
+    # ----------------------------------------------------------------------------
     macroprocessos = df[["ID-M", "Macroprocesso"]].drop_duplicates()
     macroprocessos.columns = ["id_m", "nome"]
-    macroprocessos["descricao"] = None  # 🔥 Não temos descrição no arquivo, adicionamos como NULL
+    macroprocessos["descricao"] = None
     macroprocessos.to_sql("td_samge_macroprocessos", conn, if_exists="replace", index=False)
 
-    # 📌 Inserindo Processos
+    # ----------------------------------------------------------------------------
+    # Insere Processos
+    # ----------------------------------------------------------------------------
     processos = df[["ID-P", "Processo", "Descrição do Processo", "Explicação do Processo", "ID-M"]].drop_duplicates()
     processos.columns = ["id_p", "nome", "descricao", "explicacao", "macroprocesso_id"]
     processos.to_sql("td_samge_processos", conn, if_exists="replace", index=False)
 
-    # 📌 Inserindo Ações de Manejo
+    # ----------------------------------------------------------------------------
+    # Insere Ações de Manejo
+    # ----------------------------------------------------------------------------
     acoes_manejo = df[["ID-AC", "Ação de Manejo", "Descrição da Ação de Manejo", "Explicação da Ação de Manejo", "Entrega", "ID-P"]].drop_duplicates()
     acoes_manejo.columns = ["id_ac", "nome", "descricao", "explicacao", "entrega", "processo_id"]
     acoes_manejo.to_sql("td_samge_acoes_manejo", conn, if_exists="replace", index=False)
 
-    # 📌 Inserindo Atividades
+    # ----------------------------------------------------------------------------
+    # Insere Atividades
+    # ----------------------------------------------------------------------------
     atividades = df[["ID-AT", "Atividade", "Descrição da Atividade", "Explicação da Atividade", "Subentrega", "ID-AC"]].drop_duplicates()
     atividades.columns = ["id_at", "nome", "descricao", "explicacao", "subentrega", "acao_manejo_id"]
     atividades.to_sql("td_samge_atividades", conn, if_exists="replace", index=False)
 
     conn.close()
     print("✅ Banco de dados SAMGe atualizado com sucesso!")
-
 
 
 if __name__ == "__main__":
