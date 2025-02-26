@@ -248,7 +248,7 @@ def salvar_dados_iniciativa(
         metodologia,
         demais_info_json,
         distribuicao_ucs_json,
-        formas_completo_json
+        formas_contratacao_json
     ))
 
     conn.commit()
