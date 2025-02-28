@@ -7,3 +7,4 @@ openpyxl
 # sqlite3
 # os
 matplotlib
+fpdf
