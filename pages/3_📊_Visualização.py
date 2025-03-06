@@ -20,7 +20,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📊 Visualização de Iniciativas - Versão Mais Recente")
+st.subheader("📊 Visualização de Iniciativas - Versão Mais Recente")
 
 # --- Funções para carregar dados e mapeamentos ---
 
@@ -328,8 +328,8 @@ def create_pdf(df: pd.DataFrame):
 
 # --- Botão para gerar PDF ---
 st.markdown("---")
-st.write("#### Gerar Relatório")
-if st.button("📄 Gerar Relatório em PDF"):
+# st.write("Gerar Relatório")
+if st.button("📄 Gerar Relatório em PDF", type='secondary'):
     with st.spinner("Gerando PDF..."):
         pdf = create_pdf(df_filtered)
         pdf_bytes = pdf.output(dest="S").encode("latin-1")  # todos caracteres compatíveis

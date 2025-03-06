@@ -3,6 +3,22 @@ import sqlite3
 import pandas as pd
 import os
 
+# -----------------------------------------------------------------------------
+#                     Verificação de Login e Configurações de Página
+# -----------------------------------------------------------------------------
+if "usuario_logado" not in st.session_state or not st.session_state["usuario_logado"]:
+    st.warning("🔒 Acesso negado! Faça login.")
+    st.stop()
+
+# configurar o tema do Streamlit
+st.set_page_config(
+    page_title="Gestão de Insumos",
+    page_icon="🔧",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+
 # Criar diretório para o banco de dados, se necessário
 os.makedirs("database", exist_ok=True)
 
@@ -53,11 +69,12 @@ def update_insumo(insumo_id, elemento, espec_padrao, nome_insumo, espec_tecnica,
 # =============================================================================
 # INTERFACE STREAMLIT
 # =============================================================================
-st.title("Gestão de Insumos")
-st.write("Gerencie os insumos do seu projeto.")
+st.subheader("Gestão de Insumos 🔧")  # Título da página
+
+st.markdown("---")  
 
 # --- Seção para Adicionar Novo Insumo ---
-st.header("Adicionar Novo Insumo")
+st.markdown("##### Adicionar Novo Insumo")
 with st.form(key="add_insumo_form" ):
     
     elementos = get_distinct_elementos()
@@ -78,8 +95,11 @@ with st.form(key="add_insumo_form" ):
             st.success(f"Insumo adicionado com sucesso!")
             st.rerun()
 
+
+st.markdown("---")
+
 # --- Seção para Edição dos Insumos ---
-st.header("Editar Insumos")
+st.markdown("##### Tabela de Insumos Cadastrados") 
 df = get_all_insumos()
 if df.empty:
     st.info("Nenhum insumo cadastrado.")
