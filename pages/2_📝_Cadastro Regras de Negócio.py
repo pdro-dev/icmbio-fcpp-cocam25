@@ -927,6 +927,12 @@ with st.form("form_textos_resumo"):
         df_unidades_raw = pd.read_sql_query(query, conn, params=[nova_iniciativa])
         conn.close()
 
+        # Verificar se houve mudança na iniciativa selecionada
+        if "ultima_iniciativa" not in st.session_state or st.session_state["ultima_iniciativa"] != nova_iniciativa:
+            # Atualiza o session_state com a nova iniciativa e novos dados
+            st.session_state["ultima_iniciativa"] = nova_iniciativa
+            st.session_state["df_uc_editado"] = df_unidades_raw.copy()
+
         # 2) Se nenhum registro for encontrado, emitir alerta
         if df_unidades_raw.empty:
             st.warning("Nenhuma unidade de conservação encontrada para esta iniciativa.")
