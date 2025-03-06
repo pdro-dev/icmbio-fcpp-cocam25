@@ -5,7 +5,6 @@ import json
 from fpdf import FPDF
 from io import BytesIO
 from datetime import datetime
-import math
 import textwrap
 
 # Verifica login
@@ -13,17 +12,28 @@ if "usuario_logado" not in st.session_state or not st.session_state["usuario_log
     st.warning("🔒 Acesso negado! Faça login na página principal para acessar esta seção.")
     st.stop()
 
-st.title("📊 Visualização de Iniciativas")
+st.title("📊 Visualização de Iniciativas - Versão Mais Recente")
 
 # --- Funções para carregar dados e mapeamentos ---
 
 def load_iniciativas_by_setor(setor: str) -> pd.DataFrame:
+    """
+    Retorna apenas a VERSÃO MAIS RECENTE (maior data_hora) de cada iniciativa
+    para o setor informado.
+    """
     conn = sqlite3.connect("database/app_data.db")
     query = """
     SELECT r.*, i.nome_iniciativa
     FROM tf_cadastro_regras_negocio r
-    JOIN tf_usuarios u ON r.usuario = u.cpf
     JOIN td_iniciativas i ON r.id_iniciativa = i.id_iniciativa
+    JOIN tf_usuarios u ON r.usuario = u.cpf
+    JOIN (
+        -- Seleciona a data mais recente de cada iniciativa
+        SELECT id_iniciativa, MAX(data_hora) AS max_data
+        FROM tf_cadastro_regras_negocio
+        GROUP BY id_iniciativa
+    ) sub ON sub.id_iniciativa = r.id_iniciativa
+         AND sub.max_data = r.data_hora
     WHERE u.setor_demandante = ?
     ORDER BY r.data_hora DESC
     """
@@ -35,15 +45,13 @@ def load_acoes_map():
     conn = sqlite3.connect("database/app_data.db")
     df_acoes = pd.read_sql_query("SELECT id_acao, nome_acao FROM td_acoes_aplicacao", conn)
     conn.close()
-    mapping = {str(row['id_acao']): row['nome_acao'] for _, row in df_acoes.iterrows()}
-    return mapping
+    return {str(row['id_acao']): row['nome_acao'] for _, row in df_acoes.iterrows()}
 
 def load_insumos_map():
     conn = sqlite3.connect("database/app_data.db")
     df_insumos = pd.read_sql_query("SELECT id, descricao_insumo FROM td_insumos", conn)
     conn.close()
-    mapping = {str(row['id']): row['descricao_insumo'] for _, row in df_insumos.iterrows()}
-    return mapping
+    return {str(row['id']): row['descricao_insumo'] for _, row in df_insumos.iterrows()}
 
 acoes_map = load_acoes_map()
 insumos_map = load_insumos_map()
@@ -65,9 +73,10 @@ card_css = """
     box-shadow: 0 4px 12px rgba(0,0,0,0.1);
     transition: transform 0.3s ease, box-shadow 0.3s ease;
     border-left: 5px solid #00d1b2;
+    position: relative;
 }
 .card:hover {
-    transform: translateY(-5px);
+    transform: translateY(-3px);
     box-shadow: 0 8px 16px rgba(0,0,0,0.2);
 }
 .card h3 {
@@ -99,19 +108,23 @@ card_css = """
 """
 st.markdown(card_css, unsafe_allow_html=True)
 
-# --- Seleção da Iniciativa ---
+# --- Seleção da Iniciativa (mais recente) ---
 df_iniciativas = load_iniciativas_by_setor(st.session_state["setor"])
+
+# Se não existir nenhum registro, exibir aviso
+if df_iniciativas.empty:
+    st.info("ℹ️ Nenhuma iniciativa encontrada para o seu setor.")
+    st.stop()
+
 iniciativas_list = df_iniciativas['nome_iniciativa'].unique()
-selected_iniciativa = st.selectbox("Selecione a iniciativa", iniciativas_list)
+selected_iniciativa = st.selectbox("Selecione a iniciativa mais recente", iniciativas_list)
 df_filtered = df_iniciativas[df_iniciativas['nome_iniciativa'] == selected_iniciativa]
 
 # --- Funções para formatação dos campos JSON ---
-# Substituímos "•" por "-" para evitar caracteres fora do conjunto Latin‑1
-
 def format_eixos_tematicos(json_str):
     """
-    Converte o JSON dos eixos temáticos em uma estrutura com lista hierárquica.
-    Para cada eixo, exibe o nome e, para cada ação (substituindo o id pelo nome), os insumos escolhidos.
+    Exibe o nome do eixo e as ações com insumos.
+    Substitui caracteres "•" por "-" para evitar problemas de encoding no PDF.
     """
     try:
         data = json.loads(json_str)
@@ -168,11 +181,49 @@ def process_generic_json(field):
     except Exception:
         return str(field)
 
+def format_distribuicao_ucs(json_str):
+    """
+    Exibe os valores distribuídos por unidade, se houver.
+    """
+    try:
+        data = json.loads(json_str)
+        if isinstance(data, dict):
+            # Exemplo: { "UC1": 50000, "UC2": 75000, ... }
+            lines = []
+            for uc, valor in data.items():
+                lines.append(f"{uc}: {valor}")
+            return "\n".join(lines)
+        elif isinstance(data, list):
+            # Caso seja uma lista de objetos
+            lines = []
+            for item in data:
+                lines.append(str(item))
+            return "- " + "\n- ".join(lines)
+        else:
+            return str(data)
+    except:
+        return str(json_str)
+
+def format_formas_contratacao(json_str):
+    """
+    Exibe as formas de contratação.
+    """
+    try:
+        data = json.loads(json_str)
+        if isinstance(data, list):
+            return "- " + "\n- ".join(map(str, data))
+        elif isinstance(data, dict):
+            return "\n".join([f"{k}: {v}" for k, v in data.items()])
+        else:
+            return str(data)
+    except:
+        return str(json_str)
+
 # --- Função auxiliar para calcular número de linhas (para estimar altura) ---
 def get_wrapped_text(text, width, pdf):
-    # Estima o número de caracteres por linha com base na fonte atual
     font_size = pdf.font_size_pt
     approx_chars_per_line = int(width / (font_size * 0.35))
+    import textwrap
     wrapped = textwrap.wrap(text, width=approx_chars_per_line)
     if not wrapped:
         wrapped = [""]
@@ -186,10 +237,9 @@ def create_pdf(df: pd.DataFrame):
     
     # Título do PDF
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, f"Relatório de Iniciativas - {selected_iniciativa}", ln=True, align="C")
+    pdf.cell(0, 10, f"Relatório de Iniciativas - (Versão Mais Recente)", ln=True, align="C")
     pdf.ln(5)
     
-    # Para cada registro, cria uma tabela com 2 colunas
     for idx, row in df.iterrows():
         pdf.set_font("Arial", "B", 12)
         pdf.cell(0, 10, f"Iniciativa: {row['nome_iniciativa']}", ln=True)
@@ -215,21 +265,26 @@ def create_pdf(df: pd.DataFrame):
                 elif isinstance(data, dict):
                     return "\n".join([f"{k}: {v}" for k, v in data.items()])
                 return str(data)
-            except Exception:
+            except:
                 return str(field)
         
+        # Montamos os campos que serão exibidos na tabela
         table_data = [
             ("Objetivo Geral", row['objetivo_geral']),
             ("Objetivos Específicos", process_field(row['objetivos_especificos'])),
             ("Introdução", row['introducao']),
             ("Justificativa", row['justificativa']),
             ("Metodologia", row['metodologia']),
-            ("Eixos Temáticos", format_eixos_tematicos(row['eixos_tematicos'])),
-            ("Insumos", format_insumos(row['insumos'])),
-            ("Demais Informações", process_generic_json(row['demais_informacoes'])),
+            ("Eixos Temáticos", format_eixos_tematicos(row.get('eixos_tematicos', ''))),
+            ("Insumos", format_insumos(row.get('insumos', ''))),
+            ("Distribuição por Unidade", format_distribuicao_ucs(row.get('distribuicao_ucs', ''))),
+            ("Formas de Contratação", format_formas_contratacao(row.get('formas_contratacao', ''))),
+            ("Demais Informações", process_generic_json(row.get('demais_informacoes', ''))),
+            ("Adicionar um item", "Exemplo de item adicional..."),
             ("Responsável", f"{row['usuario']} - {datetime.strptime(row['data_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')}")
         ]
         
+        # Desenha cada linha da tabela com altura dinâmica
         for campo, descricao in table_data:
             wrapped_campo, lines_campo = get_wrapped_text(campo, col_widths[0], pdf)
             wrapped_descricao, lines_descricao = get_wrapped_text(descricao, col_widths[1], pdf)
@@ -264,66 +319,77 @@ def create_pdf(df: pd.DataFrame):
     return pdf
 
 # --- Botão para gerar PDF ---
+st.markdown("---")
+st.write("#### Gerar Relatório")
 if st.button("📄 Gerar Relatório em PDF"):
     with st.spinner("Gerando PDF..."):
         pdf = create_pdf(df_filtered)
-        # Como todos os textos agora usam apenas caracteres compatíveis com Latin-1, o encode não deverá gerar erro.
-        pdf_bytes = pdf.output(dest="S").encode("latin-1")
+        pdf_bytes = pdf.output(dest="S").encode("latin-1")  # todos caracteres compatíveis
         st.download_button(
-            label="⬇️ Download do Relatório",
+            label="⬇️ Download do Relatório (PDF)",
             data=pdf_bytes,
             file_name=f"relatorio_iniciativas_{selected_iniciativa}.pdf",
             mime="application/pdf"
         )
 
 # --- Exibição dos cards na interface ---
-st.subheader(f"📂 Iniciativa: {selected_iniciativa}")
+st.markdown("---")
+st.subheader(f"Versão mais recente da iniciativa: {selected_iniciativa}")
 
-if df_filtered.empty:
-    st.info("ℹ️ Nenhuma iniciativa encontrada para o seu setor.")
-else:
-    st.markdown("<div class='card-container'>", unsafe_allow_html=True)
-    for idx, row in df_filtered.iterrows():
-        card_html = f"""
-        <div class="card">
-            <h3>Iniciativa: {row['nome_iniciativa']}</h3>
-            <div class="card-section">
-                <div class="card-section-title">🎯 Objetivo Geral</div>
-                {row['objetivo_geral']}
-            </div>
-            <div class="card-section">
-                <div class="card-section-title">📌 Objetivos Específicos</div>
-                {"- " + "<br>- ".join(json.loads(row['objetivos_especificos'])) if row['objetivos_especificos'] else ""}
-            </div>
-            <div class="card-section">
-                <div class="card-section-title">📖 Introdução</div>
-                {row['introducao']}
-            </div>
-            <div class="card-section">
-                <div class="card-section-title">📈 Justificativa</div>
-                {row['justificativa']}
-            </div>
-            <div class="card-section">
-                <div class="card-section-title">🔧 Metodologia</div>
-                {row['metodologia']}
-            </div>
-            <div class="card-section">
-                <div class="card-section-title">🗂️ Eixos Temáticos</div>
-                {format_eixos_tematicos(row['eixos_tematicos']).replace("\n", "<br>")}
-            </div>
-            <div class="card-section">
-                <div class="card-section-title">📦 Insumos</div>
-                {format_insumos(row['insumos']).replace("\n", "<br>")}
-            </div>
-            <div class="card-section">
-                <div class="card-section-title">ℹ️ Demais Informações</div>
-                {process_generic_json(row['demais_informacoes']).replace("\n", "<br>")}
-            </div>
-            <div style="margin-top: 15px;">
-                <span class="badge">👤 Responsável: {row['usuario']}</span>
-                <span class="badge">📅 {datetime.strptime(row['data_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')}</span>
-            </div>
+st.markdown("<div class='card-container'>", unsafe_allow_html=True)
+for idx, row in df_filtered.iterrows():
+    card_html = f"""
+    <div class="card">
+        <h3>Iniciativa: {row['nome_iniciativa']}</h3>
+        <div class="card-section">
+            <div class="card-section-title">Objetivo Geral</div>
+            {row['objetivo_geral']}
         </div>
-        """
-        st.markdown(card_html, unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+        <div class="card-section">
+            <div class="card-section-title">Objetivos Específicos</div>
+            {process_generic_json(row['objetivos_especificos']).replace("\\n", "<br>").replace("-", "–")}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Introdução</div>
+            {row['introducao']}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Justificativa</div>
+            {row['justificativa']}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Metodologia</div>
+            {row['metodologia']}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Eixos Temáticos</div>
+            {format_eixos_tematicos(row.get('eixos_tematicos','')).replace("\\n","<br>")}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Insumos</div>
+            {format_insumos(row.get('insumos','')).replace("\\n","<br>")}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Distribuição por Unidade</div>
+            {format_distribuicao_ucs(row.get('distribuicao_ucs','')).replace("\\n","<br>")}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Formas de Contratação</div>
+            {format_formas_contratacao(row.get('formas_contratacao','')).replace("\\n","<br>")}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Demais Informações</div>
+            {process_generic_json(row.get('demais_informacoes','')).replace("\\n","<br>")}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Adicionar um item</div>
+            Exemplo de item adicional...
+        </div>
+        <div style="margin-top: 15px;">
+            <span class="badge">Responsável: {row['usuario']}</span>
+            <span class="badge">Data/Hora: {datetime.strptime(row['data_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')}</span>
+        </div>
+    </div>
+    """
+    st.markdown(card_html, unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
