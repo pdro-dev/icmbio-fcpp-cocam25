@@ -913,122 +913,126 @@ with st.form("form_textos_resumo"):
     with tab_uc:
         st.subheader("Distribuição de Recursos por Eixo")
 
-        # 1) Conectar ao banco e buscar os dados corretos da tabela tf_cadastros_iniciativas
+        # (A) Verifica primeiro se há distribuição_ucs salva no tf_cadastro_regras_negocio
         conn = sqlite3.connect(DB_PATH)
-        query = """
+        # Pega o último registro (mais recente) dessa iniciativa
+        row_dist = conn.execute("""
+            SELECT distribuicao_ucs
+            FROM tf_cadastro_regras_negocio
+            WHERE id_iniciativa = ?
+            ORDER BY data_hora DESC
+            LIMIT 1
+        """, (nova_iniciativa,)).fetchone()
+
+        # Consulta tf_cadastros_iniciativas para fallback
+        query_fallback = """
             SELECT 
                 "Unidade de Conservação" AS Unidade,
-                "AÇÃO DE APLICAÇÃO" AS Acao,
-                "VALOR TOTAL ALOCADO" AS "Valor Alocado"
+                "AÇÃO DE APLICAÇÃO"      AS Acao,
+                "VALOR TOTAL ALOCADO"    AS "Valor Alocado"
             FROM tf_cadastros_iniciativas
             WHERE id_iniciativa = ?
             AND "VALOR TOTAL ALOCADO" > 0
         """
-        df_unidades_raw = pd.read_sql_query(query, conn, params=[nova_iniciativa])
+        df_unidades_raw = pd.read_sql_query(query_fallback, conn, params=[nova_iniciativa])
         conn.close()
 
-        # Verificar se houve mudança na iniciativa selecionada
+        # Se já existe algo em tf_cadastro_regras_negocio, priorizamos esse valor
+        df_db = pd.DataFrame()  # df vazio por enquanto
+        if row_dist and row_dist[0]:  # Significa que tem algo no campo distribuicao_ucs
+            try:
+                dist_list = json.loads(row_dist[0])  # carrega JSON
+                df_db = pd.DataFrame(dist_list)      # converte em DataFrame
+            except:
+                df_db = pd.DataFrame()
+
+        # Lógica de qual DF usar no "primeiro carregamento" ou quando mudamos de iniciativa
         if "ultima_iniciativa" not in st.session_state or st.session_state["ultima_iniciativa"] != nova_iniciativa:
-            # Atualiza o session_state com a nova iniciativa e novos dados
             st.session_state["ultima_iniciativa"] = nova_iniciativa
-            st.session_state["df_uc_editado"] = df_unidades_raw.copy()
 
-        # 2) Se nenhum registro for encontrado, emitir alerta
-        if df_unidades_raw.empty:
-            st.warning("Nenhuma unidade de conservação encontrada para esta iniciativa.")
-        else:
-            # 3) Inicializar ou carregar o df_uc_editado do session_state
-            if "df_uc_editado" not in st.session_state:
-                # Salvamos o DataFrame cru no session_state
-                st.session_state["df_uc_editado"] = df_unidades_raw.copy()
+            # (B) Se df_db não está vazio, usamos ele; caso contrário, fallback tf_cadastros_iniciativas
+            if not df_db.empty:
+                st.session_state["df_uc_editado"] = df_db.copy()
             else:
-                # Caso já exista, atualizamos apenas se a consulta trouxe novos dados
-                # (Aqui você pode decidir se substitui ou mescla. Exemplo simples: substitui se for vazio.)
-                if st.session_state["df_uc_editado"].empty:
-                    st.session_state["df_uc_editado"] = df_unidades_raw.copy()
+                st.session_state["df_uc_editado"] = df_unidades_raw.copy()
 
+        # Se df_unidades_raw e df_db também estiverem vazios, alertamos
+        if df_unidades_raw.empty and df_db.empty:
+            st.warning("Nenhuma unidade de conservação encontrada para esta iniciativa.")
+            st.stop()
 
-            def recalcular_saldo():
-                data_dict = st.session_state["editor_uc"]  # Deltas do data_editor
-                df_master = st.session_state["df_uc_editado"].copy()
+        # A partir daqui, trabalhamos com st.session_state["df_uc_editado"]
+        # (que já foi setado acima conforme prioridade).
+        def recalcular_saldo():
+            data_dict = st.session_state["editor_uc"]  # Deltas do data_editor
+            df_master = st.session_state["df_uc_editado"].copy()
 
-                # Exemplo debug
-                # st.write("Delta do data_editor:", data_dict)
+            edited_rows = data_dict.get("edited_rows", {})
+            for row_idx_str, changed_cols in edited_rows.items():
+                row_idx = int(row_idx_str)
+                for col_name, new_value in changed_cols.items():
+                    df_master.loc[row_idx, col_name] = new_value
 
-                # Mescla as edições
-                edited_rows = data_dict.get("edited_rows", {})
-                for row_idx_str, changed_cols in edited_rows.items():
-                    row_idx = int(row_idx_str)
-                    for col_name, new_value in changed_cols.items():
-                        df_master.loc[row_idx, col_name] = new_value
-
-                # Recalcula Saldo
-                df_master["Valor Alocado"] = pd.to_numeric(df_master["Valor Alocado"], errors="coerce").fillna(0)
-                for eixo_nome in colunas_eixos:
-                    if eixo_nome not in df_master.columns:
-                        df_master[eixo_nome] = 0
-                    df_master[eixo_nome] = pd.to_numeric(df_master[eixo_nome], errors="coerce").fillna(0)
-
-                df_master["Distribuir"] = df_master["Valor Alocado"] - df_master[colunas_eixos].sum(axis=1)
-
-                st.session_state["df_uc_editado"] = df_master
-
-                
-
-
-            # 4) Copiar para trabalhar localmente (sem perder o original no session_state)
-            df_editavel = st.session_state["df_uc_editado"].copy()
-
-            # 5) Garantir que as colunas fixas existam
-            colunas_fixas = ["Unidade", "Acao", "Valor Alocado"]
-            for col in colunas_fixas:
-                if col not in df_editavel.columns:
-                    df_editavel[col] = 0  # se não existe, cria
-
-            # 6) Criar colunas para cada eixo (se não existir)
+            # Cria ou atualiza as colunas de Eixos e "Valor Alocado"
+            df_master["Valor Alocado"] = pd.to_numeric(df_master.get("Valor Alocado", 0), errors="coerce").fillna(0)
             colunas_eixos = [eixo["nome_eixo"] for eixo in st.session_state["eixos_tematicos"]]
+
+            # Garante que as colunas de eixos existem e são numéricas
             for eixo_nome in colunas_eixos:
-                if eixo_nome not in df_editavel.columns:
-                    df_editavel[eixo_nome] = 0  # inicializa com zero
+                if eixo_nome not in df_master.columns:
+                    df_master[eixo_nome] = 0
+                df_master[eixo_nome] = pd.to_numeric(df_master[eixo_nome], errors="coerce").fillna(0)
 
-            # 7) Criar/Atualizar a coluna de Distribuir
-            # Antes, garantir que "Valor Alocado" seja numérico
-            df_editavel["Valor Alocado"] = pd.to_numeric(df_editavel["Valor Alocado"], errors="coerce").fillna(0)
-            # Também forçar eixos para numérico
-            for eixo_nome in colunas_eixos:
-                df_editavel[eixo_nome] = pd.to_numeric(df_editavel[eixo_nome], errors="coerce").fillna(0)
+            # Cria coluna Distribuir
+            df_master["Distribuir"] = df_master["Valor Alocado"] - df_master[colunas_eixos].sum(axis=1)
 
-            # Calcula o Distribuir
-            df_editavel["Distribuir"] = df_editavel["Valor Alocado"] - df_editavel[colunas_eixos].sum(axis=1)
+            st.session_state["df_uc_editado"] = df_master
 
-            # 8) Reordenar colunas para exibir no data_editor
-            colunas_ordenadas = colunas_fixas + ["Distribuir"] + colunas_eixos # 
-            df_editavel = df_editavel[colunas_ordenadas]
+        # Copiamos para manipular localmente
+        df_editavel = st.session_state["df_uc_editado"].copy()
 
-            # 9) Exibir formulário para editar os valores por eixo
-           
-            edited_df = st.data_editor(
-                df_editavel,
-                column_config={
-                    "Unidade": st.column_config.TextColumn("Unidade de Conservação", disabled=True),
-                    "Acao": st.column_config.TextColumn("Ação de Aplicação", disabled=True),
-                    "Valor Alocado": st.column_config.NumberColumn("Valor Alocado", disabled=True),
-                    "Distribuir": st.column_config.NumberColumn("Distribuir", disabled=True)
-                },
-                use_container_width=True,
-                key="editor_uc",
-                on_change=recalcular_saldo,
-                hide_index=True
-                )
+        # Garante colunas fixas
+        colunas_fixas = ["Unidade", "Acao", "Valor Alocado"]
+        for col in colunas_fixas:
+            if col not in df_editavel.columns:
+                df_editavel[col] = 0
 
-            # Se precisar de um botão p/ salvar no banco:
-            if st.button("Salvar Distribuição"):
-                df_final = st.session_state["df_uc_editado"]
-                # notifica que os dados foram salvos
-                st.success("Distribuição de recursos salva com sucesso!")
-                
-                # st.write("Dados finais:", df_final)
-                # Aqui você faz o update no banco
+        # Colunas dos eixos
+        colunas_eixos = [eixo["nome_eixo"] for eixo in st.session_state["eixos_tematicos"]]
+        for eixo_nome in colunas_eixos:
+            if eixo_nome not in df_editavel.columns:
+                df_editavel[eixo_nome] = 0
+
+        # Calcula "Distribuir"
+        df_editavel["Valor Alocado"] = pd.to_numeric(df_editavel["Valor Alocado"], errors="coerce").fillna(0)
+        for eixo_nome in colunas_eixos:
+            df_editavel[eixo_nome] = pd.to_numeric(df_editavel[eixo_nome], errors="coerce").fillna(0)
+        df_editavel["Distribuir"] = df_editavel["Valor Alocado"] - df_editavel[colunas_eixos].sum(axis=1)
+
+        # Ordena colunas
+        colunas_ordenadas = colunas_fixas + ["Distribuir"] + colunas_eixos
+        df_editavel = df_editavel[colunas_ordenadas]
+
+        # Exibir data_editor
+        edited_df = st.data_editor(
+            df_editavel,
+            column_config={
+                "Unidade": st.column_config.TextColumn("Unidade de Conservação", disabled=True),
+                "Acao": st.column_config.TextColumn("Ação de Aplicação", disabled=True),
+                "Valor Alocado": st.column_config.NumberColumn("Valor Alocado", disabled=True),
+                "Distribuir": st.column_config.NumberColumn("Distribuir", disabled=True)
+            },
+            use_container_width=True,
+            key="editor_uc",
+            on_change=recalcular_saldo,
+            hide_index=True
+        )
+
+        # # Exemplo: Botão p/ persistir no banco (ou pode ser salvo lá no "Salvar Alterações")
+        # if st.button("Salvar Distribuição"):
+        #     # Basta avisar. O 'salvar_dados_iniciativa' usará "st.session_state['df_uc_editado']"
+        #     st.success("Distribuição de recursos atualizada!")
+
 
 
 

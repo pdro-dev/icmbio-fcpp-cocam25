@@ -1,7 +1,7 @@
 .streamlit/secrets.toml
 .streamlit/config.toml
-# dados
-# database
+dados/*                     # Ignora todos os arquivos dentro da pasta dados
+database/app_data.db       # Ignora o arquivo app_data.db dentro da pasta database
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
