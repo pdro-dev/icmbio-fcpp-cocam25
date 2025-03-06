@@ -13,6 +13,13 @@ if "usuario_logado" not in st.session_state or not st.session_state["usuario_log
     st.warning("🔒 Acesso negado! Faça login na página principal para acessar esta seção.")
     st.stop()
 
+# configurações da página
+st.set_page_config(
+    page_title="Visualização de Iniciativas",
+    page_icon=":chart_with_upwards_trend:",
+    layout="wide"
+)
+
 st.title("📊 Visualização de Iniciativas - Versão Mais Recente")
 
 # --- Funções para carregar dados e mapeamentos ---
