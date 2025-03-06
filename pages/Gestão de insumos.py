@@ -58,7 +58,8 @@ st.write("Gerencie os insumos do seu projeto.")
 
 # --- Seção para Adicionar Novo Insumo ---
 st.header("Adicionar Novo Insumo")
-with st.form(key="add_insumo_form"):
+with st.form(key="add_insumo_form" ):
+    
     elementos = get_distinct_elementos()
     selected_elemento = st.selectbox("Elemento de Despesa", elementos)
     especs = get_distinct_espec_padrao()
