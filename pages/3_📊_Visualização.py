@@ -139,6 +139,69 @@ def format_eixos_tematicos(json_str):
     except Exception as e:
         return f"Erro: {str(e)}"
 
+def format_eixos_tematicos_table(json_str):
+    """
+    Gera uma tabela HTML com colunas: Eixo Temático | Ação de Manejo | Insumos.
+    Cada linha corresponde a uma (eixo, ação, insumos).
+    """
+    try:
+        data = json.loads(json_str)
+        if not data:
+            return "Nenhum eixo temático cadastrado."
+
+        # Início da tabela (sem indentação dentro das aspas)
+        table_html = """<table border='1' style='width:100%; border-collapse: collapse;'>
+<thead>
+<tr>
+<th>Eixo Temático</th>
+<th>Ação de Manejo</th>
+<th>Insumos</th>
+</tr>
+</thead>
+<tbody>
+"""
+
+        for eixo in data:
+            nome_eixo = eixo.get("nome_eixo", "Sem nome")
+            acoes = eixo.get("acoes_manejo", {})
+
+            if not acoes:
+                table_html += f"""
+<tr>
+<td>{nome_eixo}</td>
+<td>Nenhuma ação de manejo</td>
+<td>-</td>
+</tr>
+"""
+            else:
+                for acao_id, detalhes in acoes.items():
+                    nome_acao = acoes_map.get(str(acao_id), f"Ação {acao_id}")
+                    insumos_list = detalhes.get("insumos", [])
+                    if insumos_list:
+                        insumos_html = "<ul>"
+                        for i in insumos_list:
+                            insumo_nome = insumos_map.get(str(i), str(i))
+                            insumos_html += f"<li>{insumo_nome}</li>"
+                        insumos_html += "</ul>"
+                    else:
+                        insumos_html = "Sem insumos cadastrados"
+
+                    table_html += f"""
+<tr>
+<td>{nome_eixo}</td>
+<td>{nome_acao}</td>
+<td>{insumos_html}</td>
+</tr>
+"""
+
+        table_html += "</tbody></table>"
+        return table_html.strip()
+
+    except Exception as e:
+        return f"Erro ao gerar tabela de Eixos Temáticos: {str(e)}"
+
+
+
 def format_formas_contratacao(json_str):
     """
     Formata o JSON de formas de contratação em HTML.
@@ -434,7 +497,7 @@ def create_pdf(df: pd.DataFrame) -> PDF:
 
         # Seção: Eixos Temáticos
         draw_section_title(pdf, "Eixos Temáticos")
-        eixos_text = remove_html_for_pdf(format_eixos_tematicos(row.get('eixos_tematicos', '')))
+        eixos_text = remove_html_for_pdf(format_eixos_tematicos_table(row.get('eixos_tematicos', '')))
         draw_simple_paragraph(pdf, eixos_text)
 
         # Seção: Insumos
@@ -611,83 +674,87 @@ df_filtrado = df_iniciativas[df_iniciativas['nome_iniciativa'] == iniciativa_sel
 # Exibe os detalhes da iniciativa na interface (em cards)
 st.markdown("<div class='card-container'>", unsafe_allow_html=True)
 for idx, row in df_filtrado.iterrows():
-    nome_iniciativa     = safe_html(row.get('nome_iniciativa', ''))
-    objetivo_geral      = safe_html(row.get('objetivo_geral', ''))
-    introducao          = safe_html(row.get('introducao', ''))
-    justificativa       = safe_html(row.get('justificativa', ''))
-    metodologia         = safe_html(row.get('metodologia', ''))
-    responsavel         = safe_html(row.get('usuario', ''))
+    # Campos de texto puro (devem ser escapados para evitar problemas HTML)
+    nome_iniciativa  = safe_html(row.get('nome_iniciativa', ''))
+    objetivo_geral   = safe_html(row.get('objetivo_geral', ''))
+    introducao       = safe_html(row.get('introducao', ''))
+    justificativa    = safe_html(row.get('justificativa', ''))
+    metodologia      = safe_html(row.get('metodologia', ''))
+    responsavel      = safe_html(row.get('usuario', ''))
 
-    # Aqui usamos as funções que já lidam com JSON (ex.: format_objetivos_especificos),
-    # mas se elas podem retornar None, trate dentro delas ou faça um fallback:
+    # Campos que já retornam HTML formatado (NÃO devemos aplicar safe_html)
     objetivos_especificos = format_objetivos_especificos(row.get('objetivos_especificos', '') or '')
-    eixos_tematicos       = format_eixos_tematicos(row.get('eixos_tematicos', '') or '')
+    eixos_tematicos       = format_eixos_tematicos_table(row.get('eixos_tematicos', '') or '')
     insumos               = format_insumos(row.get('insumos', '') or '')
     distribuicao_ucs      = format_distribuicao_ucs(row.get('distribuicao_ucs', '') or '')
     formas_contratacao    = format_formas_contratacao(row.get('formas_contratacao', '') or '')
     demais_informacoes    = process_generic_json(row.get('demais_informacoes', '') or '').replace("\n", "<br>")
 
-    # Também verifique o campo data_hora
+    # Formata data/hora
     data_hora_str = row.get('data_hora')
     if data_hora_str:
         data_hora_fmt = datetime.strptime(data_hora_str, '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')
     else:
         data_hora_fmt = "(sem data)"
 
+    # Monta o HTML do card
     card_html = f"""
     <div class="card">
-    <div class="card-section">
-        <h3>{nome_iniciativa}</h3>
-    </div>
-    <div class="card-section">
-        <div class="card-section-title">Objetivo Geral</div>
-        {objetivo_geral}
-    </div>
-    <div class="card-section">
-        <div class="card-section-title">Objetivos Específicos</div>
-        {objetivos_especificos}
-    </div>
-    <div class="card-section">
-        <div class="card-section-title">Introdução</div>
-        {introducao}
-    </div>
-    <div class="card-section">
-        <div class="card-section-title">Justificativa</div>
-        {justificativa}
-    </div>
-    <div class="card-section">
-        <div class="card-section-title">Metodologia</div>
-        {metodologia}
-    </div>
-    <div class="card-section">
-        <div class="card-section-title">Eixos Temáticos</div>
-        {eixos_tematicos}
-    </div>
-    <div class="card-section">
-        <div class="card-section-title">Insumos</div>
-        {insumos}
-    </div>
-    <div class="card-section">
-        <div class="card-section-title">Distribuição por Unidade</div>
-        {distribuicao_ucs}
-    </div>
-    <div class="card-section">
-        <div class="card-section-title">Formas de Contratação</div>
-        {formas_contratacao}
-    </div>
-    <div class="card-section">
-        <div class="card-section-title">Demais Informações</div>
-        {demais_informacoes}
-    </div>
-    <div style="margin-top: 15px;">
-        <span class="badge">Responsável: {responsavel}</span>
-        <span class="badge">Data/Hora: {data_hora_fmt}</span>
-    </div>
+        <div class="card-section">
+            <h3>{nome_iniciativa}</h3>
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Objetivo Geral</div>
+            {objetivo_geral}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Objetivos Específicos</div>
+            {objetivos_especificos}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Introdução</div>
+            {introducao}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Justificativa</div>
+            {justificativa}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Metodologia</div>
+            {metodologia}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Eixos Temáticos</div>
+            {eixos_tematicos}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Insumos</div>
+            {insumos}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Distribuição por Unidade</div>
+            {distribuicao_ucs}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Formas de Contratação</div>
+            {formas_contratacao}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Demais Informações</div>
+            {demais_informacoes}
+        </div>
+        <div style="margin-top: 15px;">
+            <span class="badge">Responsável: {responsavel}</span>
+            <span class="badge">Data/Hora: {data_hora_fmt}</span>
+        </div>
     </div>
     """
+
+    # Renderiza o card com HTML interpretado
     st.markdown(card_html, unsafe_allow_html=True)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 ########################################
 # Geração do PDF                       #
