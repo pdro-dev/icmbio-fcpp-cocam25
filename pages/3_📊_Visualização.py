@@ -19,11 +19,11 @@ if "usuario_logado" not in st.session_state or not st.session_state["usuario_log
     st.stop()
 
 st.set_page_config(
-    page_title="Visualização de Iniciativas",
+    page_title="Visualização de Cadastros",
     page_icon=":chart_with_upwards_trend:",
     layout="wide"
 )
-st.subheader("📊 Visualização de Iniciativas - Versão Mais Recente")
+st.subheader("📊 Visualização de Cadastros Realizados")
 
 ########################################
 # Funções de Carregamento de Dados     #
