@@ -30,7 +30,9 @@ st.subheader("📊 Visualização de Iniciativas - Versão Mais Recente")
 ########################################
 
 def load_iniciativas(setor: str) -> pd.DataFrame:
-    """Retorna a versão mais recente de cada iniciativa para o setor informado."""
+    """
+    Retorna a versão mais recente de cada iniciativa para o setor informado.
+    """
     conn = sqlite3.connect("database/app_data.db")
     query = """
     SELECT r.*, i.nome_iniciativa
@@ -51,12 +53,18 @@ def load_iniciativas(setor: str) -> pd.DataFrame:
     return df
 
 def load_acoes_map():
+    """
+    Retorna um dicionário de mapeamento entre id_acao e nome_acao.
+    """
     conn = sqlite3.connect("database/app_data.db")
     df = pd.read_sql_query("SELECT id_acao, nome_acao FROM td_acoes_aplicacao", conn)
     conn.close()
     return {str(row['id_acao']): row['nome_acao'] for _, row in df.iterrows()}
 
 def load_insumos_map():
+    """
+    Retorna um dicionário de mapeamento entre id_insumo e descricao_insumo.
+    """
     conn = sqlite3.connect("database/app_data.db")
     df = pd.read_sql_query("SELECT id, descricao_insumo FROM td_insumos", conn)
     conn.close()
@@ -71,6 +79,9 @@ insumos_map = load_insumos_map()
 ########################################
 
 def format_objetivos_especificos(json_str):
+    """
+    Formata o JSON de objetivos específicos em HTML, separando entradas por <br>.
+    """
     try:
         data = json.loads(json_str)
         if isinstance(data, list):
@@ -82,6 +93,9 @@ def format_objetivos_especificos(json_str):
         return json_str
 
 def format_eixos_tematicos(json_str):
+    """
+    Formata o JSON de eixos temáticos em HTML, mostrando as ações e insumos.
+    """
     try:
         data = json.loads(json_str)
         if not data:
@@ -89,7 +103,7 @@ def format_eixos_tematicos(json_str):
         output = ""
         for eixo in data:
             eixo_nome = eixo.get("nome_eixo", "Sem nome")
-            output += f"<strong>Eixo Temático:</strong> {eixo_nome}<br>"
+            output += "<strong>Eixo Temático:</strong> " + eixo_nome + "<br>"
             acoes = eixo.get("acoes_manejo", {})
             if acoes:
                 output += "&nbsp;&nbsp;Ações de Manejo:<br>"
@@ -97,7 +111,7 @@ def format_eixos_tematicos(json_str):
                     acao_nome = acoes_map.get(str(acao_id), f"Ação {acao_id}")
                     insumos = detalhes.get("insumos", [])
                     if insumos:
-                        insumos_names = [insumos_map.get(str(insumo), str(insumo)) for insumo in insumos]
+                        insumos_names = [insumos_map.get(str(i), str(i)) for i in insumos]
                         output += f"&nbsp;&nbsp;&nbsp;&nbsp;· {acao_nome} - Insumos: {', '.join(insumos_names)}<br>"
                     else:
                         output += f"&nbsp;&nbsp;&nbsp;&nbsp;· {acao_nome} - Sem insumos cadastrados<br>"
@@ -109,6 +123,9 @@ def format_eixos_tematicos(json_str):
         return f"Erro: {str(e)}"
 
 def format_formas_contratacao(json_str):
+    """
+    Formata o JSON de formas de contratação em HTML.
+    """
     try:
         data = json.loads(json_str)
         if not data:
@@ -116,6 +133,7 @@ def format_formas_contratacao(json_str):
         output = ""
         tabela_formas = data.get("tabela_formas", [])
         detalhes = data.get("detalhes", {})
+
         if tabela_formas:
             output += "<strong>Formas de Contratação Disponíveis:</strong><br>"
             for item in tabela_formas:
@@ -125,6 +143,7 @@ def format_formas_contratacao(json_str):
                 output += f"· {forma} ({status})<br>"
         else:
             output += "Nenhuma forma de contratação listada.<br>"
+
         if detalhes:
             output += "<br><strong>Detalhes:</strong><br>"
             for chave, valor in detalhes.items():
@@ -133,11 +152,15 @@ def format_formas_contratacao(json_str):
                 else:
                     valor_str = str(valor) if valor != "" else "Não informado"
                 output += f"{chave}: {valor_str}<br>"
+
         return output.strip()
     except Exception as e:
         return f"Erro: {str(e)}"
 
 def format_insumos(json_str):
+    """
+    Formata o JSON de insumos, substituindo IDs por descrições via insumos_map.
+    """
     try:
         data = json.loads(json_str)
         if isinstance(data, list):
@@ -150,7 +173,9 @@ def format_insumos(json_str):
         return str(json_str)
 
 def process_generic_json(field):
-    """Converte um JSON simples em uma listagem ou string legível."""
+    """
+    Converte um JSON simples em uma listagem ou string legível, substituindo valores vazios por 'Não informado'.
+    """
     try:
         data = json.loads(field)
         if isinstance(data, list):
@@ -167,6 +192,9 @@ def process_generic_json(field):
         return str(field)
 
 def format_distribuicao_ucs(json_str):
+    """
+    Formata o JSON de distribuição por unidade em tabela HTML.
+    """
     try:
         data = json.loads(json_str)
         if isinstance(data, list):
@@ -188,16 +216,24 @@ def format_distribuicao_ucs(json_str):
 ########################################
 
 def remove_html_for_pdf(text: str) -> str:
-    """Remove tags HTML e converte <br> para quebras de linha."""
+    """
+    Remove tags HTML e converte <br> para quebras de linha.
+    """
     text = text.replace("<br>", "\n")
     text = re.sub(r"<.*?>", "", text)
     return html.unescape(text)
 
 def sanitize_text(text: str) -> str:
-    """Converte o texto para Latin-1, substituindo caracteres problemáticos."""
+    """
+    Converte o texto para Latin-1, substituindo caracteres problemáticos.
+    """
     return text.encode("latin1", errors="replace").decode("latin1")
 
 class PDF(FPDF):
+    """
+    Classe PDF customizada para adicionar header e footer em todas as páginas.
+    """
+
     def header(self):
         # Título no topo de cada página
         self.set_font("Arial", "B", 12)
@@ -208,18 +244,22 @@ class PDF(FPDF):
         # Rodapé com número da página
         self.set_y(-15)
         self.set_font("Arial", "I", 8)
-        page_num = f"Página {self.page_no()}"
+        page_num = "Página " + str(self.page_no())
         self.cell(0, 10, page_num, 0, 0, "C")
 
 def draw_section_title(pdf: PDF, title: str):
-    """Desenha um título de seção em negrito."""
+    """
+    Desenha um título de seção em negrito.
+    """
     pdf.set_font("Arial", "B", 12)
     pdf.set_text_color(0, 0, 0)  # preto
     pdf.cell(0, 8, sanitize_text(title), 0, 1)
     pdf.ln(2)
 
 def draw_simple_paragraph(pdf: PDF, text: str):
-    """Escreve um parágrafo simples, respeitando a largura."""
+    """
+    Escreve um parágrafo simples, respeitando a largura.
+    """
     pdf.set_font("Arial", "", 10)
     lines = text.split("\n")
     for line in lines:
@@ -236,11 +276,11 @@ def draw_key_value_table(pdf: PDF, data: dict, col_widths=None):
 
     if col_widths is None:
         # Calcular automaticamente
-        page_width = pdf.w - 2*pdf.l_margin
+        page_width = pdf.w - 2 * pdf.l_margin
         col_widths = [page_width * 0.3, page_width * 0.7]
 
     pdf.set_font("Arial", "B", 10)
-    pdf.set_fill_color(220, 220, 220)  # fundo cinza para cabeçalho
+    pdf.set_fill_color(220, 220, 220)  # fundo cinza p/ cabeçalho
     # Cabeçalho
     pdf.cell(col_widths[0], 6, sanitize_text("Campo"), 1, 0, "C", fill=True)
     pdf.cell(col_widths[1], 6, sanitize_text("Valor"), 1, 1, "C", fill=True)
@@ -257,8 +297,8 @@ def draw_key_value_table(pdf: PDF, data: dict, col_widths=None):
 
 def draw_table(pdf: PDF, table_data: list, headers: list):
     """
-    Desenha uma tabela com cabeçalho. 
-    table_data é uma lista de dicionários ou de listas, 
+    Desenha uma tabela com cabeçalho.
+    table_data é uma lista de dicionários ou de listas,
     headers é a lista dos nomes das colunas.
     """
     if not table_data or not headers:
@@ -266,7 +306,7 @@ def draw_table(pdf: PDF, table_data: list, headers: list):
 
     pdf.set_font("Arial", "B", 10)
     pdf.set_fill_color(220, 220, 220)
-    page_width = pdf.w - 2*pdf.l_margin
+    page_width = pdf.w - 2 * pdf.l_margin
 
     col_width = page_width / len(headers)
     # Cabeçalho
@@ -286,7 +326,7 @@ def draw_table(pdf: PDF, table_data: list, headers: list):
                 cell_text = sanitize_text(str(row.get(h, "")))
                 pdf.cell(col_width, 6, cell_text, 1, 0, "C", fill=False)
         elif isinstance(row, (list, tuple)):
-            for i, val in enumerate(row):
+            for val in row:
                 cell_text = sanitize_text(str(val))
                 pdf.cell(col_width, 6, cell_text, 1, 0, "C", fill=False)
         pdf.ln(6)
@@ -297,6 +337,10 @@ def draw_table(pdf: PDF, table_data: list, headers: list):
 ########################################
 
 def create_pdf(df: pd.DataFrame) -> PDF:
+    """
+    Cria um objeto PDF contendo todas as iniciativas do DataFrame.
+    Cada iniciativa é exibida em uma página, com seções e tabelas.
+    """
     pdf = PDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     
@@ -305,7 +349,7 @@ def create_pdf(df: pd.DataFrame) -> PDF:
 
         # Cabeçalho da iniciativa
         pdf.set_font("Arial", "B", 14)
-        iniciativa_title = f"Iniciativa: {row['nome_iniciativa']}"
+        iniciativa_title = "Iniciativa: " + str(row['nome_iniciativa'])
         pdf.cell(0, 10, sanitize_text(iniciativa_title), 0, 1, "L")
         pdf.ln(5)
 
@@ -339,7 +383,7 @@ def create_pdf(df: pd.DataFrame) -> PDF:
         eixos_text = remove_html_for_pdf(format_eixos_tematicos(row.get('eixos_tematicos', '')))
         draw_simple_paragraph(pdf, eixos_text)
 
-        # Seção: Insumos (simples)
+        # Seção: Insumos
         draw_section_title(pdf, "Insumos")
         insumos_text = remove_html_for_pdf(format_insumos(row.get('insumos', '')))
         draw_simple_paragraph(pdf, insumos_text)
@@ -352,7 +396,6 @@ def create_pdf(df: pd.DataFrame) -> PDF:
         except:
             distr_data = []
         if isinstance(distr_data, list) and len(distr_data) > 0:
-            # Vamos montar a tabela
             headers = ["Unidade", "Acao", "Valor Alocado"]
             draw_table(pdf, distr_data, headers)
         else:
@@ -370,7 +413,6 @@ def create_pdf(df: pd.DataFrame) -> PDF:
         detalhes_formas = formas_json.get("detalhes", {})
 
         if tabela_formas:
-            # Montar tabela para as formas de contratação
             data_table = []
             for item in tabela_formas:
                 forma = item.get("Forma de Contratação", "Sem descrição")
@@ -382,8 +424,7 @@ def create_pdf(df: pd.DataFrame) -> PDF:
             draw_simple_paragraph(pdf, "Não há formas de contratação listadas.")
 
         if detalhes_formas:
-            # Mostrar detalhes em tabela key-value
-            # Convertendo tudo para string
+            draw_section_title(pdf, "Detalhes das Formas de Contratação")
             detalhes_dic = {}
             for k, v in detalhes_formas.items():
                 if isinstance(v, list):
@@ -391,7 +432,6 @@ def create_pdf(df: pd.DataFrame) -> PDF:
                 elif not v:
                     v = "Não informado"
                 detalhes_dic[k] = str(v)
-            draw_section_title(pdf, "Detalhes das Formas de Contratação")
             draw_key_value_table(pdf, detalhes_dic)
 
         # Seção: Demais Informações
@@ -401,9 +441,10 @@ def create_pdf(df: pd.DataFrame) -> PDF:
 
         # Responsável e Data/Hora
         pdf.set_font("Arial", "I", 10)
-        usuario_resp = f"Responsável: {row['usuario']}"
+        usuario_resp = "Responsável: " + str(row['usuario'])
         data_reg = datetime.strptime(row['data_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')
-        pdf.cell(0, 8, sanitize_text(f"{usuario_resp} | Data/Hora: {data_reg}"), 0, 1, "L")
+        resp_line = usuario_resp + " | Data/Hora: " + data_reg
+        pdf.cell(0, 8, sanitize_text(resp_line), 0, 1, "L")
 
         # Linha divisória
         pdf.ln(3)
@@ -501,57 +542,71 @@ df_filtrado = df_iniciativas[df_iniciativas['nome_iniciativa'] == iniciativa_sel
 # Exibe os detalhes da iniciativa na interface (em cards)
 st.markdown("<div class='card-container'>", unsafe_allow_html=True)
 for idx, row in df_filtrado.iterrows():
-    card_html = f"""
+    card_html = """
     <div class="card">
         <div class="card-section">
-            <h3>{html.escape(row['nome_iniciativa'])}</h3>
+            <h3>{nome_iniciativa}</h3>
         </div>
         <div class="card-section">
             <div class="card-section-title">Objetivo Geral</div>
-            {html.escape(row['objetivo_geral']).replace("\n", "<br>")}
+            {objetivo_geral}
         </div>
         <div class="card-section">
             <div class="card-section-title">Objetivos Específicos</div>
-            {format_objetivos_especificos(row['objetivos_especificos'])}
+            {objetivos_especificos}
         </div>
         <div class="card-section">
             <div class="card-section-title">Introdução</div>
-            {html.escape(row['introducao']).replace("\n", "<br>")}
+            {introducao}
         </div>
         <div class="card-section">
             <div class="card-section-title">Justificativa</div>
-            {html.escape(row['justificativa']).replace("\n", "<br>")}
+            {justificativa}
         </div>
         <div class="card-section">
             <div class="card-section-title">Metodologia</div>
-            {html.escape(row['metodologia']).replace("\n", "<br>")}
+            {metodologia}
         </div>
         <div class="card-section">
             <div class="card-section-title">Eixos Temáticos</div>
-            {format_eixos_tematicos(row.get('eixos_tematicos', ''))}
+            {eixos_tematicos}
         </div>
         <div class="card-section">
             <div class="card-section-title">Insumos</div>
-            {format_insumos(row.get('insumos', ''))}
+            {insumos}
         </div>
         <div class="card-section">
             <div class="card-section-title">Distribuição por Unidade</div>
-            {format_distribuicao_ucs(row.get('distribuicao_ucs', ''))}
+            {distribuicao_ucs}
         </div>
         <div class="card-section">
             <div class="card-section-title">Formas de Contratação</div>
-            {format_formas_contratacao(row.get('formas_contratacao', ''))}
+            {formas_contratacao}
         </div>
         <div class="card-section">
             <div class="card-section-title">Demais Informações</div>
-            {process_generic_json(row.get('demais_informacoes', '')).replace("\n", "<br>")}
+            {demais_informacoes}
         </div>
         <div style="margin-top: 15px;">
-            <span class="badge">Responsável: {html.escape(row['usuario'])}</span>
-            <span class="badge">Data/Hora: {datetime.strptime(row['data_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')}</span>
+            <span class="badge">Responsável: {responsavel}</span>
+            <span class="badge">Data/Hora: {data_hora}</span>
         </div>
     </div>
-    """
+    """.format(
+        nome_iniciativa=html.escape(str(row['nome_iniciativa'])),
+        objetivo_geral=html.escape(str(row['objetivo_geral'])).replace("\n", "<br>"),
+        objetivos_especificos=format_objetivos_especificos(row['objetivos_especificos']),
+        introducao=html.escape(str(row['introducao'])).replace("\n", "<br>"),
+        justificativa=html.escape(str(row['justificativa'])).replace("\n", "<br>"),
+        metodologia=html.escape(str(row['metodologia'])).replace("\n", "<br>"),
+        eixos_tematicos=format_eixos_tematicos(row.get('eixos_tematicos', '')),
+        insumos=format_insumos(row.get('insumos', '')),
+        distribuicao_ucs=format_distribuicao_ucs(row.get('distribuicao_ucs', '')),
+        formas_contratacao=format_formas_contratacao(row.get('formas_contratacao', '')),
+        demais_informacoes=process_generic_json(row.get('demais_informacoes', '')).replace("\n", "<br>"),
+        responsavel=html.escape(str(row['usuario'])),
+        data_hora=datetime.strptime(row['data_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')
+    )
     st.markdown(card_html, unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -571,7 +626,7 @@ if st.button("📄 Gerar Extrato Completo em PDF", type='secondary'):
         st.download_button(
             label="⬇️ Download do Extrato (PDF)",
             data=pdf_bytes,
-            file_name=f"extrato_iniciativa_{iniciativa_selecionada}.pdf",
+            file_name="extrato_iniciativa_" + str(iniciativa_selecionada) + ".pdf",
             mime="application/pdf"
         )
         pdf_viewer(tmp_path)
