@@ -27,10 +27,9 @@ st.subheader("📊 Visualização de Iniciativas - Versão Mais Recente")
 
 # --- Funções para carregar dados e mapeamentos ---
 
-def load_iniciativas_by_setor(setor: str) -> pd.DataFrame:
+def load_iniciativas(setor: str) -> pd.DataFrame:
     """
-    Retorna apenas a VERSÃO MAIS RECENTE (maior data_hora) de cada iniciativa
-    para o setor informado.
+    Retorna apenas a VERSÃO MAIS RECENTE (maior data_hora) de cada iniciativa para o setor informado.
     """
     conn = sqlite3.connect("database/app_data.db")
     query = """
@@ -193,19 +192,12 @@ def remove_html_for_pdf(text: str) -> str:
     Remove tags HTML e converte <br> em quebras de linha,
     além de fazer unescape de entidades HTML.
     """
-    # Substitui <br> por \n
     text = text.replace("<br>", "\n")
-    # Remove quaisquer tags HTML remanescentes
     text = re.sub(r"<.*?>", "", text)
-    # Decodifica entidades HTML (&amp;, &gt;, etc.)
     text = html.unescape(text)
     return text
 
 def get_wrapped_text(text, width, pdf):
-    """
-    Retorna (texto_em_linhas, numero_de_linhas) para permitir
-    a impressão correta em multicell.
-    """
     font_size = pdf.font_size_pt
     approx_chars_per_line = int(width / (font_size * 0.35))
     import textwrap
@@ -220,9 +212,8 @@ def create_pdf(df: pd.DataFrame):
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     
-    # Título do PDF
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Extrato de Iniciativas - Setor: " + st.session_state["setor"], ln=True, align="C")
+    pdf.cell(0, 10, "Extrato de Iniciativas - Setor: " + setor_selecionado, ln=True, align="C")
     pdf.ln(5)
     
     for idx, row in df.iterrows():
@@ -230,24 +221,20 @@ def create_pdf(df: pd.DataFrame):
         pdf.cell(0, 10, f"Iniciativa: {row['nome_iniciativa']}", ln=True)
         pdf.ln(2)
         
-        # Cabeçalho da tabela
         headers = ["Campo", "Descrição"]
         effective_width = pdf.w - 2 * pdf.l_margin
         col_widths = [effective_width * 0.3, effective_width * 0.7]
         line_height = 8
         
         pdf.set_font("Arial", "B", 10)
-        pdf.set_fill_color(220, 220, 220)  # Fundo cinza claro
-        # Imprime cabeçalho com fill=True
+        pdf.set_fill_color(220, 220, 220)
         for i, header in enumerate(headers):
             pdf.cell(col_widths[i], line_height, header, border=1, align="C", fill=True)
         pdf.ln(line_height)
         
-        # Conteúdo da tabela
         pdf.set_font("Arial", "", 10)
-        pdf.set_fill_color(255, 255, 255)  # Volta para fundo branco
+        pdf.set_fill_color(255, 255, 255)
         
-        # Monta os dados
         table_data = [
             ("Objetivo Geral", row['objetivo_geral']),
             ("Objetivos Específicos", row['objetivos_especificos']),
@@ -262,12 +249,8 @@ def create_pdf(df: pd.DataFrame):
             ("Responsável", f"{row['usuario']} - {datetime.strptime(row['data_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')}")
         ]
         
-        # Para cada linha, removemos HTML e depois quebramos em múltiplas linhas
         for campo, valor in table_data:
-            # Remove tags HTML do valor
             valor_limpo = remove_html_for_pdf(str(valor))
-            
-            # Quebra em múltiplas linhas
             wrapped_campo, lines_campo = get_wrapped_text(campo, col_widths[0], pdf)
             wrapped_valor, lines_valor = get_wrapped_text(valor_limpo, col_widths[1], pdf)
             max_lines = max(lines_campo, lines_valor)
@@ -276,18 +259,15 @@ def create_pdf(df: pd.DataFrame):
             x_initial = pdf.get_x()
             y_initial = pdf.get_y()
             
-            # Imprime o "Campo"
             pdf.multi_cell(col_widths[0], line_height, wrapped_campo, border=1)
             y_after = pdf.get_y()
             cell1_height = y_after - y_initial
             
-            # Imprime a "Descrição"
             pdf.set_xy(x_initial + col_widths[0], y_initial)
             pdf.multi_cell(col_widths[1], line_height, wrapped_valor, border=1)
             y_after2 = pdf.get_y()
             cell2_height = y_after2 - y_initial
             
-            # Ajusta se houver diferença de altura entre as duas células
             final_height = max(cell1_height, cell2_height)
             if cell1_height < final_height:
                 pdf.set_xy(x_initial, y_initial + cell1_height)
@@ -297,7 +277,6 @@ def create_pdf(df: pd.DataFrame):
                 pdf.cell(col_widths[1], final_height - cell2_height, "", border=1)
             pdf.set_xy(x_initial, y_initial + final_height)
         
-        # Linha de separação entre iniciativas
         pdf.ln(10)
         pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.l_margin, pdf.get_y())
         pdf.ln(10)
@@ -368,15 +347,26 @@ th {
 """
 st.markdown(card_css, unsafe_allow_html=True)
 
-# --- Carrega todas as iniciativas do setor do usuário ---
-df_iniciativas = load_iniciativas_by_setor(st.session_state["setor"])
+# --- Setor padrão do usuário (não é selecionável) ---
+# O setor é definido com base na sessão do usuário, por exemplo:
+setor_selecionado = st.session_state.get("setor", "Não informado")
+
+# --- Carrega as iniciativas do setor do usuário ---
+df_iniciativas = load_iniciativas(setor_selecionado)
 if df_iniciativas.empty:
     st.info("ℹ️ Nenhuma iniciativa encontrada para o seu setor.")
     st.stop()
 
-# Exibição dos cards para visualização na interface
+# --- Seção de seleção de iniciativa ---
+nomes_iniciativas = df_iniciativas['nome_iniciativa'].unique().tolist()
+iniciativa_selecionada = st.selectbox("Selecione a iniciativa", nomes_iniciativas)
+
+# Filtra o DataFrame para a iniciativa selecionada
+df_filtrado = df_iniciativas[df_iniciativas['nome_iniciativa'] == iniciativa_selecionada]
+
+# Exibição do card para visualização da iniciativa selecionada
 st.markdown("<div class='card-container'>", unsafe_allow_html=True)
-for idx, row in df_iniciativas.iterrows():
+for idx, row in df_filtrado.iterrows():
     objetivo_geral = html.escape(row['objetivo_geral']).replace("\n", "<br>")
     objetivos_especificos = format_objetivos_especificos(row['objetivos_especificos'])
     introducao = html.escape(row['introducao']).replace("\n", "<br>")
@@ -443,15 +433,13 @@ for idx, row in df_iniciativas.iterrows():
     st.markdown(card_html, unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
-# --- Botão para gerar o PDF com extrato completo ---
+# --- Botão para gerar o PDF com extrato completo da iniciativa selecionada ---
 if st.button("📄 Gerar Extrato Completo em PDF", type='secondary'):
     with st.spinner("Gerando Extrato em PDF..."):
-        pdf = create_pdf(df_iniciativas)
-        # Gera a string do PDF, substitui "•" por "·" (compatível com latin-1)
+        pdf = create_pdf(df_filtrado)
         pdf_str = pdf.output(dest="S")
         pdf_str = pdf_str.replace("•", "·")
-        pdf_bytes = pdf_str.encode("latin-1", errors="ignore")  # "ignore" remove chars inválidos
-        # Salva o PDF em arquivo temporário para exibição
+        pdf_bytes = pdf_str.encode("latin-1", errors="ignore")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(pdf_bytes)
             tmp_path = tmp.name
@@ -459,7 +447,7 @@ if st.button("📄 Gerar Extrato Completo em PDF", type='secondary'):
         st.download_button(
             label="⬇️ Download do Extrato (PDF)",
             data=pdf_bytes,
-            file_name=f"extrato_iniciativas_{st.session_state['setor']}.pdf",
+            file_name=f"extrato_iniciativa_{iniciativa_selecionada}.pdf",
             mime="application/pdf"
         )
         
