@@ -29,28 +29,45 @@ st.subheader("📊 Visualização de Iniciativas - Versão Mais Recente")
 # Funções de Carregamento de Dados     #
 ########################################
 
-def load_iniciativas(setor: str) -> pd.DataFrame:
-    """
-    Retorna a versão mais recente de cada iniciativa para o setor informado.
-    """
+def load_iniciativas(setor: str, perfil: str) -> pd.DataFrame:
     conn = sqlite3.connect("database/app_data.db")
-    query = """
-    SELECT r.*, i.nome_iniciativa
-    FROM tf_cadastro_regras_negocio r
-    JOIN td_iniciativas i ON r.id_iniciativa = i.id_iniciativa
-    JOIN tf_usuarios u ON r.usuario = u.cpf
-    JOIN (
-        SELECT id_iniciativa, MAX(data_hora) AS max_data
-        FROM tf_cadastro_regras_negocio
-        GROUP BY id_iniciativa
-    ) sub ON sub.id_iniciativa = r.id_iniciativa
-         AND sub.max_data = r.data_hora
-    WHERE u.setor_demandante = ?
-    ORDER BY r.data_hora DESC
-    """
-    df = pd.read_sql_query(query, conn, params=[setor])
+    
+    if perfil in ("admin", "cocam"):
+        # Usuários "admin" ou "cocam" veem TODAS as iniciativas
+        query = """
+        SELECT r.*, i.nome_iniciativa
+        FROM tf_cadastro_regras_negocio r
+        JOIN td_iniciativas i ON r.id_iniciativa = i.id_iniciativa
+        JOIN (
+            SELECT id_iniciativa, MAX(data_hora) AS max_data
+            FROM tf_cadastro_regras_negocio
+            GROUP BY id_iniciativa
+        ) sub ON sub.id_iniciativa = r.id_iniciativa
+             AND sub.max_data = r.data_hora
+        ORDER BY r.data_hora DESC
+        """
+        df = pd.read_sql_query(query, conn)
+    else:
+        # Demais usuários veem apenas iniciativas do seu setor
+        query = """
+        SELECT r.*, i.nome_iniciativa
+        FROM tf_cadastro_regras_negocio r
+        JOIN td_iniciativas i ON r.id_iniciativa = i.id_iniciativa
+        JOIN tf_usuarios u ON r.usuario = u.cpf
+        JOIN (
+            SELECT id_iniciativa, MAX(data_hora) AS max_data
+            FROM tf_cadastro_regras_negocio
+            GROUP BY id_iniciativa
+        ) sub ON sub.id_iniciativa = r.id_iniciativa
+             AND sub.max_data = r.data_hora
+        WHERE u.setor_demandante = ?
+        ORDER BY r.data_hora DESC
+        """
+        df = pd.read_sql_query(query, conn, params=[setor])
+    
     conn.close()
     return df
+
 
 def load_acoes_map():
     """
@@ -190,10 +207,42 @@ def process_generic_json(field):
         return str(data)
     except Exception:
         return str(field)
+    
+def format_float_br(value_str: str) -> str:
+    """
+    Tenta converter value_str em float e formata em estilo brasileiro:
+    - separador de milhar = ponto
+    - separador decimal = vírgula
+    - 2 casas decimais
+    Caso não seja possível converter, retorna a string original.
+    """
+    if not value_str:
+        return ""
+    try:
+        # Converte para float
+        val = float(value_str)
+    except ValueError:
+        return value_str  # Se não for numérico, retorna sem formatação
+
+    # Formata no estilo "1.234,56"
+    # 1) Formata no estilo en_US => "1,234.56"
+    val_en = f"{val:,.2f}"
+    # 2) Troca ponto <-> vírgula
+    #    - No "1,234.56": a vírgula separa milhar e o ponto a casa decimal
+    #    - Precisamos "1.234,56"
+    parts = val_en.split(".")
+    # parts[0] = "1,234"
+    integer_part = parts[0].replace(",", ".")  # "1.234"
+    decimal_part = parts[1]  # "56"
+    val_br = integer_part + "," + decimal_part  # "1.234,56"
+    return val_br
+
+
 
 def format_distribuicao_ucs(json_str):
     """
-    Formata o JSON de distribuição por unidade em tabela HTML.
+    Formata o JSON de distribuição por unidade em tabela HTML,
+    com formatação numérica para 'Valor Alocado'.
     """
     try:
         data = json.loads(json_str)
@@ -203,13 +252,18 @@ def format_distribuicao_ucs(json_str):
             for item in data:
                 unidade = item.get("Unidade", "")
                 acao = item.get("Acao", "")
-                valor = item.get("Valor Alocado", "")
-                table_html += f"<tr><td>{unidade}</td><td>{acao}</td><td>{valor}</td></tr>"
+                valor = item.get("Valor Alocado", "")  # string, float, etc.
+                
+                # 1) Converte e formata o valor
+                valor_formatado = format_float_br(str(valor))
+                
+                table_html += f"<tr><td>{unidade}</td><td>{acao}</td><td>{valor_formatado}</td></tr>"
             table_html += "</table>"
             return table_html
         return str(data)
     except Exception:
         return str(json_str)
+
 
 ########################################
 # Funções Auxiliares para o PDF        #
@@ -522,14 +576,29 @@ th {
 st.markdown(card_css, unsafe_allow_html=True)
 
 ########################################
+# Funções Auxiliares para a Interface  #
+########################################
+def safe_html(value: str) -> str:
+    """
+    Converte None em string vazia e substitui quebras de linha por <br>.
+    """
+    if value is None:
+        value = ""
+    return html.escape(str(value)).replace("\n", "<br>")
+
+
+
+
+########################################
 # Seleção de Iniciativa e Exibição     #
 ########################################
 
 # O setor é obtido da sessão do usuário
-setor_selecionado = st.session_state.get("setor", "Não informado")
+perfil_usuario = st.session_state.get("perfil", "")  # 'admin', 'cocam' ou outro
+setor_usuario  = st.session_state.get("setor", "")
 
 # Carrega as iniciativas do setor do usuário
-df_iniciativas = load_iniciativas(setor_selecionado)
+df_iniciativas = load_iniciativas(setor_usuario, perfil_usuario)
 if df_iniciativas.empty:
     st.info("ℹ️ Nenhuma iniciativa encontrada para o seu setor.")
     st.stop()
@@ -542,72 +611,82 @@ df_filtrado = df_iniciativas[df_iniciativas['nome_iniciativa'] == iniciativa_sel
 # Exibe os detalhes da iniciativa na interface (em cards)
 st.markdown("<div class='card-container'>", unsafe_allow_html=True)
 for idx, row in df_filtrado.iterrows():
-    card_html = """
+    nome_iniciativa     = safe_html(row.get('nome_iniciativa', ''))
+    objetivo_geral      = safe_html(row.get('objetivo_geral', ''))
+    introducao          = safe_html(row.get('introducao', ''))
+    justificativa       = safe_html(row.get('justificativa', ''))
+    metodologia         = safe_html(row.get('metodologia', ''))
+    responsavel         = safe_html(row.get('usuario', ''))
+
+    # Aqui usamos as funções que já lidam com JSON (ex.: format_objetivos_especificos),
+    # mas se elas podem retornar None, trate dentro delas ou faça um fallback:
+    objetivos_especificos = format_objetivos_especificos(row.get('objetivos_especificos', '') or '')
+    eixos_tematicos       = format_eixos_tematicos(row.get('eixos_tematicos', '') or '')
+    insumos               = format_insumos(row.get('insumos', '') or '')
+    distribuicao_ucs      = format_distribuicao_ucs(row.get('distribuicao_ucs', '') or '')
+    formas_contratacao    = format_formas_contratacao(row.get('formas_contratacao', '') or '')
+    demais_informacoes    = process_generic_json(row.get('demais_informacoes', '') or '').replace("\n", "<br>")
+
+    # Também verifique o campo data_hora
+    data_hora_str = row.get('data_hora')
+    if data_hora_str:
+        data_hora_fmt = datetime.strptime(data_hora_str, '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')
+    else:
+        data_hora_fmt = "(sem data)"
+
+    card_html = f"""
     <div class="card">
-        <div class="card-section">
-            <h3>{nome_iniciativa}</h3>
-        </div>
-        <div class="card-section">
-            <div class="card-section-title">Objetivo Geral</div>
-            {objetivo_geral}
-        </div>
-        <div class="card-section">
-            <div class="card-section-title">Objetivos Específicos</div>
-            {objetivos_especificos}
-        </div>
-        <div class="card-section">
-            <div class="card-section-title">Introdução</div>
-            {introducao}
-        </div>
-        <div class="card-section">
-            <div class="card-section-title">Justificativa</div>
-            {justificativa}
-        </div>
-        <div class="card-section">
-            <div class="card-section-title">Metodologia</div>
-            {metodologia}
-        </div>
-        <div class="card-section">
-            <div class="card-section-title">Eixos Temáticos</div>
-            {eixos_tematicos}
-        </div>
-        <div class="card-section">
-            <div class="card-section-title">Insumos</div>
-            {insumos}
-        </div>
-        <div class="card-section">
-            <div class="card-section-title">Distribuição por Unidade</div>
-            {distribuicao_ucs}
-        </div>
-        <div class="card-section">
-            <div class="card-section-title">Formas de Contratação</div>
-            {formas_contratacao}
-        </div>
-        <div class="card-section">
-            <div class="card-section-title">Demais Informações</div>
-            {demais_informacoes}
-        </div>
-        <div style="margin-top: 15px;">
-            <span class="badge">Responsável: {responsavel}</span>
-            <span class="badge">Data/Hora: {data_hora}</span>
-        </div>
+    <div class="card-section">
+        <h3>{nome_iniciativa}</h3>
     </div>
-    """.format(
-        nome_iniciativa=html.escape(str(row['nome_iniciativa'])),
-        objetivo_geral=html.escape(str(row['objetivo_geral'])).replace("\n", "<br>"),
-        objetivos_especificos=format_objetivos_especificos(row['objetivos_especificos']),
-        introducao=html.escape(str(row['introducao'])).replace("\n", "<br>"),
-        justificativa=html.escape(str(row['justificativa'])).replace("\n", "<br>"),
-        metodologia=html.escape(str(row['metodologia'])).replace("\n", "<br>"),
-        eixos_tematicos=format_eixos_tematicos(row.get('eixos_tematicos', '')),
-        insumos=format_insumos(row.get('insumos', '')),
-        distribuicao_ucs=format_distribuicao_ucs(row.get('distribuicao_ucs', '')),
-        formas_contratacao=format_formas_contratacao(row.get('formas_contratacao', '')),
-        demais_informacoes=process_generic_json(row.get('demais_informacoes', '')).replace("\n", "<br>"),
-        responsavel=html.escape(str(row['usuario'])),
-        data_hora=datetime.strptime(row['data_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')
-    )
+    <div class="card-section">
+        <div class="card-section-title">Objetivo Geral</div>
+        {objetivo_geral}
+    </div>
+    <div class="card-section">
+        <div class="card-section-title">Objetivos Específicos</div>
+        {objetivos_especificos}
+    </div>
+    <div class="card-section">
+        <div class="card-section-title">Introdução</div>
+        {introducao}
+    </div>
+    <div class="card-section">
+        <div class="card-section-title">Justificativa</div>
+        {justificativa}
+    </div>
+    <div class="card-section">
+        <div class="card-section-title">Metodologia</div>
+        {metodologia}
+    </div>
+    <div class="card-section">
+        <div class="card-section-title">Eixos Temáticos</div>
+        {eixos_tematicos}
+    </div>
+    <div class="card-section">
+        <div class="card-section-title">Insumos</div>
+        {insumos}
+    </div>
+    <div class="card-section">
+        <div class="card-section-title">Distribuição por Unidade</div>
+        {distribuicao_ucs}
+    </div>
+    <div class="card-section">
+        <div class="card-section-title">Formas de Contratação</div>
+        {formas_contratacao}
+    </div>
+    <div class="card-section">
+        <div class="card-section-title">Demais Informações</div>
+        {demais_informacoes}
+    </div>
+    <div style="margin-top: 15px;">
+        <span class="badge">Responsável: {responsavel}</span>
+        <span class="badge">Data/Hora: {data_hora_fmt}</span>
+    </div>
+    </div>
+    """
     st.markdown(card_html, unsafe_allow_html=True)
+
 st.markdown("</div>", unsafe_allow_html=True)
 
 ########################################

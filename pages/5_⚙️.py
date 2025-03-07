@@ -20,8 +20,8 @@ db_path = "database/app_data.db"
 st.sidebar.subheader("⚙️ Configurações")
 
 # 📌 Verifica se o usuário logado é ADMIN para exibir opções avançadas
-# if perfil == "admin":
-if True:
+if perfil == "admin":
+# if True:
     with st.sidebar.expander("🛠 Opções Avançadas", expanded=False):
         # 🔄 Botão para recriar o banco de dados
         if st.button("🔄 Recriar Banco de Dados"):
