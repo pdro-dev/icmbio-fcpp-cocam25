@@ -45,6 +45,13 @@ def init_database():
         VALUES (?, ?, ?, ?, ?)
     """, (admin_cpf, admin_nome, admin_email, admin_setor, admin_perfil))
 
+    # Cria (ou ignora) um usuário com perfil cocam
+    cursor.execute("""
+        INSERT OR IGNORE INTO tf_usuarios (cpf, nome_completo, email, setor_demandante, perfil)
+        VALUES (?, ?, ?, ?, ?)
+    """, ("11111111111", "COCAM", " ", "COCAM", "cocam"))
+
+
     # ----------------------------------------------------------------------------
     # 2) LEITURA DA BASE JSON (df_base) E CRIAÇÃO DE TABELAS DE APOIO
     # ----------------------------------------------------------------------------
@@ -220,6 +227,21 @@ def init_database():
         )
     """)
     conn.commit()
+
+
+    # verifica se colunas origem, situacao e registrado_por existem na tabela td_insumos
+    # se não existirem, cria as colunas com valores default
+    cursor.execute("PRAGMA table_info(td_insumos)")
+    columns = cursor.fetchall()
+    columns = [col[1] for col in columns]
+    if "origem" not in columns:
+        cursor.execute(""" ALTER TABLE td_insumos ADD COLUMN origem TEXT DEFAULT 'base_funbio' """)
+    if "situacao" not in columns:
+        cursor.execute(""" ALTER TABLE td_insumos ADD COLUMN situacao TEXT DEFAULT 'ativo' """)
+    if "registrado_por" not in columns:
+        cursor.execute(""" ALTER TABLE td_insumos ADD COLUMN registrado_por TEXT DEFAULT 'admin' """)
+    conn.commit()
+
 
     # ----------------------------------------------------------------------------
     # 9) POPULA AS TABELAS DIMENSÃO (demandantes, iniciativas, ações, unidades)
