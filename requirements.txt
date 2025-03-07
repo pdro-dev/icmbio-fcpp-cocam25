@@ -3,8 +3,5 @@ pandas
 numpy
 streamlit-aggrid
 openpyxl
-# time
-# sqlite3
-# os
 matplotlib
-fpdf
+streamlit-pdf-viewer
