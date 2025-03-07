@@ -130,4 +130,4 @@ st.write("DEBUG nova_iniciativa:", nova_iniciativa)
 # ax.set_ylabel("Eixo Y")
 # st.pyplot(fig)
 
-st.success("🚀 Testes finalizados! Ajuste os componentes conforme necessário.")
+# st.success("🚀 Testes finalizados! Ajuste os componentes conforme necessário.")
