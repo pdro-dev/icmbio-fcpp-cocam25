@@ -13,7 +13,7 @@ if "usuario_logado" not in st.session_state or not st.session_state["usuario_log
     st.warning("🔒 Acesso negado! Faça login na página principal para acessar esta seção.")
     st.stop()
 
-# configurações da página
+# Configurações da página
 st.set_page_config(
     page_title="Visualização de Iniciativas",
     page_icon=":chart_with_upwards_trend:",
@@ -64,98 +64,85 @@ def load_insumos_map():
 acoes_map = load_acoes_map()
 insumos_map = load_insumos_map()
 
-# --- CSS para layout na interface ---
-card_css = """
-<style>
-.card-container {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(650px, 1fr));
-    gap: 25px;
-    padding: 20px;
-}
-.card {
-    background: #ffffff;
-    border-radius: 15px;
-    padding: 25px;
-    color: #333;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-    transition: transform 0.3s ease, box-shadow 0.3s ease;
-    border-left: 5px solid #00d1b2;
-    position: relative;
-}
-.card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
-}
-.card h3 {
-    margin-top: 0;
-    font-size: 1.8rem;
-    color: #00d1b2;
-}
-.card-section {
-    margin-bottom: 15px;
-    padding: 12px;
-    background: #f9f9f9;
-    border-radius: 8px;
-}
-.card-section-title {
-    font-weight: 600;
-    color: #00d1b2;
-    margin-bottom: 8px;
-    font-size: 1.1rem;
-}
-.badge {
-    background: #00d1b233;
-    color: #00d1b2;
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 0.9rem;
-    margin-right: 10px;
-}
-</style>
-"""
-st.markdown(card_css, unsafe_allow_html=True)
-
-# --- Seleção da Iniciativa (mais recente) ---
-df_iniciativas = load_iniciativas_by_setor(st.session_state["setor"])
-
-# Se não existir nenhum registro, exibir aviso
-if df_iniciativas.empty:
-    st.info("ℹ️ Nenhuma iniciativa encontrada para o seu setor.")
-    st.stop()
-
-iniciativas_list = df_iniciativas['nome_iniciativa'].unique()
-selected_iniciativa = st.selectbox("Selecione a iniciativa mais recente", iniciativas_list)
-df_filtered = df_iniciativas[df_iniciativas['nome_iniciativa'] == selected_iniciativa]
-
 # --- Funções para formatação dos campos JSON ---
-def format_eixos_tematicos(json_str):
+
+def format_objetivos_especificos(json_str):
     """
-    Exibe o nome do eixo e as ações com insumos.
-    Substitui caracteres "•" por "-" para evitar problemas de encoding no PDF.
+    Formata os Objetivos Específicos removendo as aspas e unindo os itens em linhas separadas.
     """
     try:
         data = json.loads(json_str)
-        text = ""
+        if isinstance(data, list):
+            return "<br>".join(data)
+        elif isinstance(data, dict):
+            return "<br>".join([f"{k}: {v}" for k, v in data.items()])
+        else:
+            return str(data)
+    except Exception:
+        return json_str
+
+def format_eixos_tematicos(json_str):
+    """
+    Formata os Eixos Temáticos de forma detalhada.
+    Para cada eixo, exibe o nome e as ações de manejo com os respectivos insumos.
+    """
+    try:
+        data = json.loads(json_str)
+        if not data:
+            return "Nenhum eixo temático cadastrado."
+        output = ""
         for eixo in data:
-            eixo_nome = eixo.get('nome_eixo', '')
-            text += f"{eixo_nome}\n"
+            eixo_nome = eixo.get("nome_eixo", "Sem nome")
+            output += f"Eixo Temático: {eixo_nome}<br>"
             acoes = eixo.get("acoes_manejo", {})
             if acoes:
+                output += "  Ações de Manejo:<br>"
                 for acao_id, detalhes in acoes.items():
                     acao_nome = acoes_map.get(str(acao_id), f"Ação {acao_id}")
                     insumos = detalhes.get("insumos", [])
-                    insumos_names = []
-                    for insumo in insumos:
-                        insumo_str = str(insumo)
-                        insumo_nome = insumos_map.get(insumo_str, insumo_str)
-                        insumos_names.append(insumo_nome)
-                    text += f"  - {acao_nome}: Insumos - {', '.join(insumos_names)}\n"
+                    if insumos:
+                        insumos_names = [insumos_map.get(str(insumo), str(insumo)) for insumo in insumos]
+                        output += f"    • {acao_nome} - Insumos: {', '.join(insumos_names)}<br>"
+                    else:
+                        output += f"    • {acao_nome} - Sem insumos cadastrados<br>"
             else:
-                text += "  Nenhuma ação cadastrada.\n"
-        return text
-    except Exception:
-        return str(json_str)
+                output += "  Nenhuma ação de manejo cadastrada.<br>"
+            output += "<br>"
+        return output.strip()
+    except Exception as e:
+        return f"Erro ao processar dados: {str(e)}"
+
+def format_formas_contratacao(json_str):
+    """
+    Formata as Formas de Contratação exibindo as opções com seu status e os detalhes.
+    """
+    try:
+        data = json.loads(json_str)
+        if not data:
+            return "Nenhuma forma de contratação cadastrada."
+        output = ""
+        tabela_formas = data.get("tabela_formas", [])
+        detalhes = data.get("detalhes", {})
+        if tabela_formas:
+            output += "Formas de Contratação Disponíveis:<br>"
+            for item in tabela_formas:
+                forma = item.get("Forma de Contratação", "Sem descrição")
+                selecionado = item.get("Selecionado", False)
+                status = "Selecionado" if selecionado else "Não selecionado"
+                output += f"• {forma} ({status})<br>"
+        else:
+            output += "Nenhuma forma de contratação listada.<br>"
+        if detalhes:
+            output += "<br>Detalhes:<br>"
+            for chave, valor in detalhes.items():
+                if isinstance(valor, list):
+                    valor_str = ", ".join(map(str, valor))
+                else:
+                    valor_str = str(valor) if valor != "" else "Não informado"
+                output += f"{chave}: {valor_str}<br>"
+        return output.strip()
+    except Exception as e:
+        return f"Erro ao processar dados: {str(e)}"
 
 def format_insumos(json_str):
     try:
@@ -166,11 +153,11 @@ def format_insumos(json_str):
                 insumo_str = str(insumo)
                 insumo_nome = insumos_map.get(insumo_str, insumo_str)
                 result.append(insumo_nome)
-            return "- " + "\n- ".join(result)
+            return "- " + "<br>- ".join(result)
         elif isinstance(data, dict):
             text = ""
             for key, value in data.items():
-                text += f"{key}: {value}\n"
+                text += f"{key}: {value}<br>"
             return text
         else:
             return str(data)
@@ -181,9 +168,9 @@ def process_generic_json(field):
     try:
         data = json.loads(field)
         if isinstance(data, list):
-            return "- " + "\n- ".join(map(str, data))
+            return "- " + "<br>- ".join(map(str, data))
         elif isinstance(data, dict):
-            return "\n".join([f"{k}: {v}" for k, v in data.items()])
+            return "<br>".join([f"{k}: {v}" for k, v in data.items()])
         else:
             return str(data)
     except Exception:
@@ -191,40 +178,23 @@ def process_generic_json(field):
 
 def format_distribuicao_ucs(json_str):
     """
-    Exibe os valores distribuídos por unidade, se houver.
-    """
-    try:
-        data = json.loads(json_str)
-        if isinstance(data, dict):
-            # Exemplo: { "UC1": 50000, "UC2": 75000, ... }
-            lines = []
-            for uc, valor in data.items():
-                lines.append(f"{uc}: {valor}")
-            return "\n".join(lines)
-        elif isinstance(data, list):
-            # Caso seja uma lista de objetos
-            lines = []
-            for item in data:
-                lines.append(str(item))
-            return "- " + "\n- ".join(lines)
-        else:
-            return str(data)
-    except:
-        return str(json_str)
-
-def format_formas_contratacao(json_str):
-    """
-    Exibe as formas de contratação.
+    Exibe os valores distribuídos por unidade em formato de tabela HTML.
     """
     try:
         data = json.loads(json_str)
         if isinstance(data, list):
-            return "- " + "\n- ".join(map(str, data))
-        elif isinstance(data, dict):
-            return "\n".join([f"{k}: {v}" for k, v in data.items()])
+            table_html = "<table>"
+            table_html += "<tr><th>Unidade</th><th>Ação</th><th>Valor Alocado</th></tr>"
+            for item in data:
+                unidade = item.get("Unidade", "")
+                acao = item.get("Acao", "")
+                valor = item.get("Valor Alocado", "")
+                table_html += f"<tr><td>{unidade}</td><td>{acao}</td><td>{valor}</td></tr>"
+            table_html += "</table>"
+            return table_html
         else:
             return str(data)
-    except:
+    except Exception as e:
         return str(json_str)
 
 # --- Função auxiliar para calcular número de linhas (para estimar altura) ---
@@ -276,7 +246,6 @@ def create_pdf(df: pd.DataFrame):
             except:
                 return str(field)
         
-        # Montamos os campos que serão exibidos na tabela
         table_data = [
             ("Objetivo Geral", row['objetivo_geral']),
             ("Objetivos Específicos", process_field(row['objetivos_especificos'])),
@@ -292,7 +261,6 @@ def create_pdf(df: pd.DataFrame):
             ("Responsável", f"{row['usuario']} - {datetime.strptime(row['data_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')}")
         ]
         
-        # Desenha cada linha da tabela com altura dinâmica
         for campo, descricao in table_data:
             wrapped_campo, lines_campo = get_wrapped_text(campo, col_widths[0], pdf)
             wrapped_descricao, lines_descricao = get_wrapped_text(descricao, col_widths[1], pdf)
@@ -326,44 +294,103 @@ def create_pdf(df: pd.DataFrame):
     
     return pdf
 
-# --- Botão para gerar PDF ---
-st.markdown("---")
-# st.write("Gerar Relatório")
-if st.button("📄 Gerar Relatório em PDF", type='secondary'):
-    with st.spinner("Gerando PDF..."):
-        pdf = create_pdf(df_filtered)
-        pdf_bytes = pdf.output(dest="S").encode("latin-1")  # todos caracteres compatíveis
-        st.download_button(
-            label="⬇️ Download do Relatório (PDF)",
-            data=pdf_bytes,
-            file_name=f"relatorio_iniciativas_{selected_iniciativa}.pdf",
-            mime="application/pdf"
-        )
+# --- CSS para layout na interface ---
+card_css = """
+<style>
+.card-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(650px, 1fr));
+    gap: 25px;
+    padding: 20px;
+}
+.card {
+    background: #ffffff;
+    border-radius: 15px;
+    padding: 25px;
+    color: #333;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    border-left: 5px solid #00d1b2;
+    position: relative;
+}
+.card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+}
+.card h3 {
+    margin-top: 0;
+    font-size: 1.8rem;
+    color: #00d1b2;
+}
+.card-section {
+    margin-bottom: 15px;
+    padding: 12px;
+    background: #f9f9f9;
+    border-radius: 8px;
+}
+.card-section-title {
+    font-weight: 600;
+    color: #00d1b2;
+    margin-bottom: 8px;
+    font-size: 1.1rem;
+}
+.badge {
+    background: #00d1b233;
+    color: #00d1b2;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.9rem;
+    margin-right: 10px;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+table, th, td {
+    border: 1px solid #ddd;
+    padding: 8px;
+}
+th {
+    background-color: #00d1b2;
+    color: white;
+}
+</style>
+"""
+st.markdown(card_css, unsafe_allow_html=True)
+
+# --- Seleção da Iniciativa (mais recente) ---
+df_iniciativas = load_iniciativas_by_setor(st.session_state["setor"])
+
+if df_iniciativas.empty:
+    st.info("ℹ️ Nenhuma iniciativa encontrada para o seu setor.")
+    st.stop()
+
+iniciativas_list = df_iniciativas['nome_iniciativa'].unique()
+selected_iniciativa = st.selectbox("Selecione a iniciativa mais recente", iniciativas_list)
+df_filtered = df_iniciativas[df_iniciativas['nome_iniciativa'] == selected_iniciativa]
 
 # --- Exibição dos cards na interface ---
 if df_filtered.empty:
     st.warning("⚠️ Nenhuma versão recente encontrada para esta iniciativa.")
 else:
     st.markdown("<div class='card-container'>", unsafe_allow_html=True)
-
     for idx, row in df_filtered.iterrows():
         objetivo_geral = html.escape(row['objetivo_geral']).replace("\n", "<br>")
-        objetivos_especificos = html.escape(json.dumps(row['objetivos_especificos'], ensure_ascii=False)).replace("\n", "<br>")
+        objetivos_especificos = format_objetivos_especificos(row['objetivos_especificos'])
         introducao = html.escape(row['introducao']).replace("\n", "<br>")
         justificativa = html.escape(row['justificativa']).replace("\n", "<br>")
         metodologia = html.escape(row['metodologia']).replace("\n", "<br>")
-        eixos_tematicos = html.escape(json.dumps(row.get('eixos_tematicos', ''), ensure_ascii=False)).replace("\n", "<br>")
-        insumos = html.escape(json.dumps(row.get('insumos', ''), ensure_ascii=False)).replace("\n", "<br>")
-        distribuicao_ucs = html.escape(json.dumps(row.get('distribuicao_ucs', ''), ensure_ascii=False)).replace("\n", "<br>")
-        formas_contratacao = html.escape(json.dumps(row.get('formas_contratacao', ''), ensure_ascii=False)).replace("\n", "<br>")
-        demais_informacoes = html.escape(json.dumps(row.get('demais_informacoes', ''), ensure_ascii=False)).replace("\n", "<br>")
-
+        eixos_tematicos = format_eixos_tematicos(row.get('eixos_tematicos', ''))
+        insumos = format_insumos(row.get('insumos', ''))
+        distribuicao_ucs = format_distribuicao_ucs(row.get('distribuicao_ucs', ''))
+        formas_contratacao = format_formas_contratacao(row.get('formas_contratacao', ''))
+        demais_informacoes = process_generic_json(row.get('demais_informacoes', '')).replace("\n", "<br>")
         data_formatada = datetime.strptime(row['data_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')
 
         card_html = f"""
             <div class="card">
                 <div class="card-section">
-                <h3>{html.escape(row['nome_iniciativa'])}</h3>
+                    <h3>{html.escape(row['nome_iniciativa'])}</h3>
                 </div>
                 <div class="card-section">
                     <div class="card-section-title">Objetivo Geral</div>
@@ -411,7 +438,5 @@ else:
                 </div>
             </div>
         """
-
         st.markdown(card_html, unsafe_allow_html=True)
-
     st.markdown("</div>", unsafe_allow_html=True)
