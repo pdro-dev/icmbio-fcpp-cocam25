@@ -896,11 +896,11 @@ with st.form("form_textos_resumo"):
 
                             st.success("Seleção atualizada (sem perder itens já escolhidos em outros filtros)!")
 
-                    # Botão para limpar todas as seleções de insumos dessa ação
-                    if st.button("Limpar Lista de Insumos", key=f"limpar_{i}_{ac_id}"):
-                        st.session_state["insumos_selecionados"][ac_id] = set()
-                        ac_data["insumos"] = []
-                        st.success("Todos os insumos foram removidos para esta ação!")
+                    # # Botão para limpar todas as seleções de insumos dessa ação
+                    # if st.button("Limpar Lista de Insumos", key=f"limpar_{i}_{ac_id}"):
+                    #     st.session_state["insumos_selecionados"][ac_id] = set()
+                    #     ac_data["insumos"] = []
+                    #     st.success("Todos os insumos foram removidos para esta ação!")
 
                     st.write("---")
 
@@ -1190,34 +1190,60 @@ with st.form("form_textos_resumo"):
                     value=st.session_state.get("parcerias_info", "")
                 )
 
-        # (Sem botão "Salvar Formas de Contratação", pois será salvo no "Salvar Alterações" geral)
-        # 1) Extrair a tabela de formas marcadas (df_formas_contratacao)
+        detalhes_por_forma = {}
+
+        # 1) Sempre salvar "tabela_formas"
         formas_df_dict = st.session_state["df_formas_contratacao"].to_dict(orient="records")
 
-        # 2) Extrair demais campos avulsos (observações, justificativas etc.)
-        contratacao_extra = {
-            "observacoes_caixa": st.session_state.get("observacoes_caixa", ""),
-            "contrato_icmbio_escolhido": st.session_state.get("contrato_icmbio_escolhido", ""),
-            "coord_geral_gestora": st.session_state.get("coord_geral_gestora", ""),
-            "justificativa_icmbio": st.session_state.get("justificativa_icmbio", ""),
-            "existe_projeto_cppar": st.session_state.get("existe_projeto_cppar", ""),
-            "sei_projeto": st.session_state.get("sei_projeto", ""),
-            "sei_ata": st.session_state.get("sei_ata", ""),
-            "in_concorda": st.session_state.get("in_concorda", ""),
-            "justificativa_fundacao": st.session_state.get("justificativa_fundacao", ""),
-            "in_amparo": st.session_state.get("in_amparo", ""),
-            "f_aparceria": st.session_state.get("f_aparceria", []),
-            "parcerias_info": st.session_state.get("parcerias_info", "")
-        }
+        # 2) Verificar quais formas foram selecionadas
+        selected_forms = [row["Forma de Contratação"] for row in formas_df_dict if row["Selecionado"]]
 
-        # 3) Monta o dicionário final
+        # 3) Se "Contrato Caixa" estiver em selected_forms, montar dict
+        if "Contrato Caixa" in selected_forms:
+            detalhes_por_forma["Contrato Caixa"] = {
+                "Observações": st.session_state.get("observacoes_caixa", "")
+            }
+
+        # 4) Se "Contrato ICMBio" estiver em selected_forms, montar dict
+        if "Contrato ICMBio" in selected_forms:
+            detalhes_por_forma["Contrato ICMBio"] = {
+                "Contratos Escolhidos": st.session_state.get("contrato_icmbio_escolhido", ""),
+                "Coordenação Geral Gestora": st.session_state.get("coord_geral_gestora", ""),
+                "Justificativa Uso ICMBio": st.session_state.get("justificativa_icmbio", "")
+            }
+
+        # 5) Se "Fundação de Apoio credenciada pelo ICMBio" estiver selecionado
+        if "Fundação de Apoio credenciada pelo ICMBio" in selected_forms:
+            existe_proj = st.session_state.get("existe_projeto_cppar", "")
+            fundacao_dict = {
+                "Já existe projeto CPPar?": existe_proj
+            }
+            if existe_proj == "Sim":
+                fundacao_dict["SEI do Projeto"] = st.session_state.get("sei_projeto", "")
+                fundacao_dict["SEI da Ata/Decisão CPPar"] = st.session_state.get("sei_ata", "")
+
+            fundacao_dict["Concorda com IN 18/2018 e 12/2024?"] = st.session_state.get("in_concorda", "")
+            fundacao_dict["Justificativa Fundação de Apoio"] = st.session_state.get("justificativa_fundacao", "")
+
+            detalhes_por_forma["Fundação de Apoio credenciada pelo ICMBio"] = fundacao_dict
+
+        # 6) Se "Fundação de Amparo à pesquisa" estiver selecionado
+        if "Fundação de Amparo à pesquisa" in selected_forms:
+            amparo_dict = {
+                "IN de Amparo?": st.session_state.get("in_amparo", ""),
+                "Fundações Selecionadas": ", ".join(st.session_state.get("f_aparceria", [])),
+                "Informações de Parceria": st.session_state.get("parcerias_info", "")
+            }
+            detalhes_por_forma["Fundação de Amparo à pesquisa"] = amparo_dict
+
+        # Agora unimos tudo em st.session_state
         formas_dict = {
-            "tabela_formas": formas_df_dict,  # Lista de dicionários com {Forma de Contratação, Selecionado}
-            "detalhes": contratacao_extra     # Campos extras digitados em text_area, radio, etc.
+            "tabela_formas": formas_df_dict,
+            "detalhes_por_forma": detalhes_por_forma
         }
 
-        # 4) Salva em session_state para uso no momento do INSERT
         st.session_state["formas_contratacao_detalhes"] = formas_dict
+
 
 
 

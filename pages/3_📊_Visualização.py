@@ -74,9 +74,9 @@ def load_acoes_map():
     Retorna um dicionário de mapeamento entre id_acao e nome_acao.
     """
     conn = sqlite3.connect("database/app_data.db")
-    df = pd.read_sql_query("SELECT id_acao, nome_acao FROM td_acoes_aplicacao", conn)
+    df = pd.read_sql_query("SELECT id_ac, nome FROM td_samge_acoes_manejo", conn)
     conn.close()
-    return {str(row['id_acao']): row['nome_acao'] for _, row in df.iterrows()}
+    return {str(row['id_ac']): row['nome'] for _, row in df.iterrows()}
 
 def load_insumos_map():
     """
@@ -97,47 +97,42 @@ insumos_map = load_insumos_map()
 
 def format_objetivos_especificos(json_str):
     """
-    Formata o JSON de objetivos específicos em HTML, separando entradas por <br>.
+    Formata o JSON de objetivos específicos em uma lista de bullet points (HTML).
     """
     try:
         data = json.loads(json_str)
+        # Se for uma lista (ex.: ["Objetivo 1", "Objetivo 2"])
         if isinstance(data, list):
-            return "<br>".join(data)
+            if not data:  # lista vazia
+                return "Nenhum objetivo específico."
+            # Monta uma <ul> com <li> para cada item
+            html_list = "<ul>"
+            for item in data:
+                # Escapa qualquer caractere especial
+                item_escaped = html.escape(str(item))
+                html_list += f"<li>{item_escaped}</li>"
+            html_list += "</ul>"
+            return html_list
+        
+        # Se for um dicionário
         elif isinstance(data, dict):
-            return "<br>".join([f"{k}: {v}" for k, v in data.items()])
-        return str(data)
+            if not data:  # dicionário vazio
+                return "Nenhum objetivo específico."
+            # Você pode decidir como exibir: bullet points para cada chave:valor
+            html_list = "<ul>"
+            for k, v in data.items():
+                item_escaped = f"{html.escape(str(k))}: {html.escape(str(v))}"
+                html_list += f"<li>{item_escaped}</li>"
+            html_list += "</ul>"
+            return html_list
+        
+        # Caso não seja lista nem dict, retorna texto puro
+        return html.escape(str(data))
+    
     except Exception:
-        return json_str
+        # Se não conseguir carregar como JSON, retorna o texto bruto escapado
+        return html.escape(json_str)
 
-def format_eixos_tematicos(json_str):
-    """
-    Formata o JSON de eixos temáticos em HTML, mostrando as ações e insumos.
-    """
-    try:
-        data = json.loads(json_str)
-        if not data:
-            return "Nenhum eixo temático cadastrado."
-        output = ""
-        for eixo in data:
-            eixo_nome = eixo.get("nome_eixo", "Sem nome")
-            output += "<strong>Eixo Temático:</strong> " + eixo_nome + "<br>"
-            acoes = eixo.get("acoes_manejo", {})
-            if acoes:
-                output += "&nbsp;&nbsp;Ações de Manejo:<br>"
-                for acao_id, detalhes in acoes.items():
-                    acao_nome = acoes_map.get(str(acao_id), f"Ação {acao_id}")
-                    insumos = detalhes.get("insumos", [])
-                    if insumos:
-                        insumos_names = [insumos_map.get(str(i), str(i)) for i in insumos]
-                        output += f"&nbsp;&nbsp;&nbsp;&nbsp;· {acao_nome} - Insumos: {', '.join(insumos_names)}<br>"
-                    else:
-                        output += f"&nbsp;&nbsp;&nbsp;&nbsp;· {acao_nome} - Sem insumos cadastrados<br>"
-            else:
-                output += "Nenhuma ação de manejo cadastrada.<br>"
-            output += "<br>"
-        return output.strip()
-    except Exception as e:
-        return f"Erro: {str(e)}"
 
 def format_eixos_tematicos_table(json_str):
     """
@@ -204,53 +199,113 @@ def format_eixos_tematicos_table(json_str):
 
 def format_formas_contratacao(json_str):
     """
-    Formata o JSON de formas de contratação em HTML.
+    Formata o JSON de formas de contratação em HTML,
+    mas agora exibe APENAS os detalhes das formas efetivamente selecionadas,
+    que estarão em "detalhes_por_forma".
     """
     try:
         data = json.loads(json_str)
         if not data:
             return "Nenhuma forma de contratação cadastrada."
-        output = ""
-        tabela_formas = data.get("tabela_formas", [])
-        detalhes = data.get("detalhes", {})
 
-        if tabela_formas:
-            output += "<strong>Formas de Contratação Disponíveis:</strong><br>"
+        # Parte 1: tabela_formas (com "Selecionado" True/False)
+        tabela_formas = data.get("tabela_formas", [])
+        if not tabela_formas:
+            formas_html = "<p>Nenhuma forma de contratação listada.</p>"
+        else:
+            formas_html = """<table border='1' style='width:100%; border-collapse: collapse;'>
+<thead>
+<tr>
+<th>Forma de Contratação</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+"""
             for item in tabela_formas:
-                forma = item.get("Forma de Contratação", "Sem descrição")
+                forma = str(item.get("Forma de Contratação", "Sem descrição"))
                 selecionado = item.get("Selecionado", False)
                 status = "Selecionado" if selecionado else "Não selecionado"
-                output += f"· {forma} ({status})<br>"
-        else:
-            output += "Nenhuma forma de contratação listada.<br>"
+                formas_html += f"""
+<tr>
+<td>{html.escape(forma)}</td>
+<td>{html.escape(status)}</td>
+</tr>
+"""
+            formas_html += "</tbody></table>"
 
-        if detalhes:
-            output += "<br><strong>Detalhes:</strong><br>"
-            for chave, valor in detalhes.items():
-                if isinstance(valor, list):
-                    valor_str = ", ".join(map(str, valor)) if valor else "Não informado"
-                else:
-                    valor_str = str(valor) if valor != "" else "Não informado"
-                output += f"{chave}: {valor_str}<br>"
+        # Parte 2: detalhes_por_forma => exibir só as que forem selecionadas
+        detalhes_html = ""
+        detalhes_por_forma = data.get("detalhes_por_forma", {})
+        # Exibimos cada "forma" e seus detalhes como uma mini-tabela
+        for forma, dict_det in detalhes_por_forma.items():
+            detalhes_html += f"<h5 style='margin-top: 10px;'>{html.escape(forma)}</h5>"
+            if not dict_det:
+                detalhes_html += "<p>Sem detalhes para esta forma.</p>"
+                continue
 
-        return output.strip()
+            # Monta uma tabela chave-valor
+            detalhes_html += """<table border='1' style='width:100%; border-collapse: collapse;'>
+<thead>
+<tr>
+<th colspan='2'>Detalhes</th>
+</tr>
+</thead>
+<tbody>
+"""
+            for k, v in dict_det.items():
+                detalhes_html += f"""
+<tr>
+<td>{html.escape(str(k))}</td>
+<td>{html.escape(str(v))}</td>
+</tr>
+"""
+            detalhes_html += "</tbody></table>"
+
+        return formas_html.strip() + "<br>" + detalhes_html.strip()
+
     except Exception as e:
-        return f"Erro: {str(e)}"
+        return f"Erro ao formatar as formas de contratação: {str(e)}"
+
+
 
 def format_insumos(json_str):
     """
-    Formata o JSON de insumos, substituindo IDs por descrições via insumos_map.
+    Formata o JSON de insumos, substituindo IDs por descrições via insumos_map
+    e exibindo em ordem alfabética.
     """
     try:
         data = json.loads(json_str)
+        # Se for lista de IDs
         if isinstance(data, list):
+            # Mapeia cada ID para a descrição e ordena alfabeticamente
             result = [insumos_map.get(str(insumo), str(insumo)) for insumo in data]
+            result = sorted(result, key=lambda x: x.lower())  # Ordenação ignorando maiúsc/minúsc
+
+            # Cria bullets:
+            # Se a lista estiver vazia, retorna algo como "Nenhum insumo"
+            if not result:
+                return "Nenhum insumo cadastrado."
+
             return "- " + "<br>- ".join(result)
+
+        # Se for um dicionário (chave: valor)
         elif isinstance(data, dict):
-            return "<br>".join([f"{k}: {v}" for k, v in data.items()])
+            # Opcional: ordenar por chave (alfabética) antes de exibir
+            sorted_items = sorted(data.items(), key=lambda x: str(x[0]).lower())
+
+            # Monta string "chave: valor" para cada par
+            lines = []
+            for k, v in sorted_items:
+                lines.append(f"{k}: {v}")
+            return "<br>".join(lines)
+
+        # Caso não seja lista nem dict
         return str(data)
+
     except Exception:
         return str(json_str)
+
 
 def process_generic_json(field):
     """
@@ -311,7 +366,7 @@ def format_distribuicao_ucs(json_str):
         data = json.loads(json_str)
         if isinstance(data, list):
             table_html = "<table border='1' cellpadding='4'>"
-            table_html += "<tr><th>Unidade</th><th>Ação</th><th>Valor Alocado</th></tr>"
+            table_html += "<tr><th>Unidade</th><th>Ação de Aplicação</th><th>Valor Alocado</th></tr>"
             for item in data:
                 unidade = item.get("Unidade", "")
                 acao = item.get("Acao", "")
@@ -326,6 +381,133 @@ def format_distribuicao_ucs(json_str):
         return str(data)
     except Exception:
         return str(json_str)
+    
+
+def format_distribuicao_por_eixo(json_str: str) -> str:
+    """
+    Lê o JSON da distribuição, que tem colunas:
+      - Unidade
+      - Acao
+      - Valor Alocado
+      - (Possíveis Eixos)...
+      - Distribuir
+    Cria:
+      - Uma tabela para cada Eixo com (Unidade, Ação, ValorEixo)
+      - Uma tabela final com Resumo (Eixo, Soma).
+    """
+    try:
+        data = json.loads(json_str)
+        if not data or not isinstance(data, list):
+            return "<p>Nenhuma informação de distribuição.</p>"
+
+        df = pd.DataFrame(data)
+
+        # Verifica se colunas mínimas existem
+        colunas_necessarias = {"Unidade", "Acao", "Valor Alocado", "Distribuir"}
+        if not colunas_necessarias.issubset(df.columns):
+            return "<p>Estrutura de distribuição inválida. Faltam colunas básicas.</p>"
+
+        # Identificar as colunas de Eixo: ficam entre "Valor Alocado" e "Distribuir" no DataFrame
+        # Então, pegamos a lista de colunas
+        cols = list(df.columns)
+        idx_valor = cols.index("Valor Alocado")
+        idx_distribuir = cols.index("Distribuir")
+        
+        # Eixos são colunas no slice entre idx_valor+1 e idx_distribuir
+        # Exemplo: Valor Alocado = col n, Distribuir = col n+2, então col n+1 é Eixo
+        eixos_cols = cols[idx_valor+1 : idx_distribuir]  # ex.: ["Gestão Territorial Integrada", "Pesquisa", ...]
+
+        if not eixos_cols:
+            # Se não houver colunas intermediárias, não há eixos
+            return "<p>Nenhum eixo para exibir distribuição.</p>"
+
+        # Ordenar o DataFrame p/ ficar mais organizado
+        df.sort_values(by=["Unidade", "Acao"], inplace=True)
+
+        html_output = ""
+
+        # 1) Para cada Eixo, criar uma tabela
+        soma_por_eixo = {}  # Para armazenar o total de cada eixo
+        for eixo in eixos_cols:
+            # Filtrar apenas as linhas que tenham valor > 0 nesse eixo
+            df_eixo = df[df[eixo] > 0].copy()
+            if df_eixo.empty:
+                # Se não houver linhas com valor > 0 nesse eixo, ignoramos ou exibimos "nenhuma alocação"
+                continue
+
+            # Gera tabela HTML
+            table_html = """<table border='1' style='width:100%; border-collapse: collapse; margin-bottom:10px;">
+<thead>
+<tr>
+<th>Unidade</th>
+<th>Ação</th>
+<th style="text-align:right;">Valor {Eixo}</th>
+</tr>
+</thead>
+<tbody>
+""".replace("{Eixo}", html.escape(eixo))
+
+            total_eixo = 0.0
+            for _, row_eixo in df_eixo.iterrows():
+                unidade = html.escape(str(row_eixo["Unidade"]))
+                acao = html.escape(str(row_eixo["Acao"]))
+                valor_eixo = float(row_eixo[eixo])
+                valor_formatado = format_float_br(str(valor_eixo))
+                total_eixo += valor_eixo
+
+                table_html += f"""
+<tr>
+<td>{unidade}</td>
+<td>{acao}</td>
+<td style="text-align:right;">{valor_formatado}</td>
+</tr>
+"""
+
+            table_html += "</tbody></table>"
+
+            # Soma e converte para BR
+            soma_por_eixo[eixo] = total_eixo
+            total_eixo_str = format_float_br(str(total_eixo))
+
+            # Adiciona no HTML de saída
+            html_output += f"<h4 style='margin-top:15px;'>Eixo: {html.escape(eixo)}</h4>"
+            html_output += table_html
+            html_output += f"<p><strong>Total do Eixo</strong>: {total_eixo_str}</p>"
+            html_output += "<hr>"
+
+        # 2) Criar tabela final de Resumo por Eixo (se tiver eixos)
+        if soma_por_eixo:
+            # Ordenar eixos por nome
+            html_output += "<h4>Resumo por Eixo</h4>"
+            table_resumo = """<table border='1' style='width:100%; border-collapse: collapse; margin-top:5px;">
+<thead>
+<tr>
+<th>Eixo</th>
+<th style="text-align:right;">Valor Total</th>
+</tr>
+</thead>
+<tbody>
+"""
+            for eixo_nome in sorted(soma_por_eixo.keys(), key=str.lower):
+                valor_total = format_float_br(str(soma_por_eixo[eixo_nome]))
+                table_resumo += f"""
+<tr>
+<td>{html.escape(eixo_nome)}</td>
+<td style="text-align:right;">{valor_total}</td>
+</tr>
+"""
+            table_resumo += "</tbody></table>"
+            html_output += table_resumo
+        else:
+            if not html_output:
+                # Se nada foi gerado acima e soma_por_eixo está vazio => Ninguém tinha valor > 0
+                html_output = "<p>Nenhuma alocação positiva nos eixos selecionados.</p>"
+
+        return html_output.strip()
+
+    except Exception as e:
+        return f"<p>Erro ao gerar distribuição: {html.escape(str(e))}</p>"
+
 
 
 ########################################
@@ -649,6 +831,55 @@ def safe_html(value: str) -> str:
         value = ""
     return html.escape(str(value)).replace("\n", "<br>")
 
+LABEL_MAP = {
+    "diretoria": "Diretoria Responsável",
+    "coordenacao_geral": "Coordenação Geral",
+    "coordenacao": "Coordenação",
+    "demandante" : "Setor Demandante"
+}
+
+def format_demais_informacoes(json_str: str) -> str:
+    """
+    Converte o JSON (ou dicionário) de 'demais_informacoes' em bullets.
+    """
+    try:
+        data = json.loads(json_str)
+    except:
+        # Se não for JSON válido, retorna o texto como está (escapado)
+        return html.escape(json_str)
+
+    if not data:
+        return "<p>Sem informações adicionais.</p>"
+
+    # Se for dicionário
+    if isinstance(data, dict):
+        # Monta uma lista <ul> com cada chave: valor como <li>.
+        html_list = "<ul>"
+        for k, v in data.items():
+            label = LABEL_MAP.get(k, k)  # se não achar, usa a própria chave 
+            if v is None or v == "":
+                v = "Não informado"
+            # Escapamos as chaves e valores
+            key_escaped = html.escape(str(k))
+            val_escaped = html.escape(str(v))
+            # html_list += f"<li><strong>{key_escaped}</strong>: {val_escaped}</li>"
+            html_list += f"<li><strong>{html.escape(str(label))}</strong>: {val_escaped}</li>"
+        html_list += "</ul>"
+        return html_list
+
+    # Se for lista
+    elif isinstance(data, list):
+        if not data:  # lista vazia
+            return "<p>Sem informações adicionais.</p>"
+        html_list = "<ul>"
+        for item in data:
+            item_escaped = html.escape(str(item))
+            html_list += f"<li>{item_escaped}</li>"
+        html_list += "</ul>"
+        return html_list
+    
+    # Se for outro tipo de dado, retornar como texto puro escapado
+    return html.escape(str(data))
 
 
 
@@ -687,8 +918,9 @@ for idx, row in df_filtrado.iterrows():
     eixos_tematicos       = format_eixos_tematicos_table(row.get('eixos_tematicos', '') or '')
     insumos               = format_insumos(row.get('insumos', '') or '')
     distribuicao_ucs      = format_distribuicao_ucs(row.get('distribuicao_ucs', '') or '')
+    distribuicao_ucs_eixo = format_distribuicao_por_eixo(row.get('distribuicao_ucs', '') or '')
     formas_contratacao    = format_formas_contratacao(row.get('formas_contratacao', '') or '')
-    demais_informacoes    = process_generic_json(row.get('demais_informacoes', '') or '').replace("\n", "<br>")
+    demais_informacoes    = format_demais_informacoes(row.get('demais_informacoes', '') or '')
 
     # Formata data/hora
     data_hora_str = row.get('data_hora')
@@ -728,12 +960,16 @@ for idx, row in df_filtrado.iterrows():
             {eixos_tematicos}
         </div>
         <div class="card-section">
-            <div class="card-section-title">Insumos</div>
+            <div class="card-section-title">Lista de Insumos Selecionados</div>
             {insumos}
         </div>
         <div class="card-section">
             <div class="card-section-title">Distribuição por Unidade</div>
             {distribuicao_ucs}
+        </div>
+        <div class="card-section">
+            <div class="card-section-title">Distribuição por Unidade / Eixo</div>
+            {distribuicao_ucs_eixo}
         </div>
         <div class="card-section">
             <div class="card-section-title">Formas de Contratação</div>
