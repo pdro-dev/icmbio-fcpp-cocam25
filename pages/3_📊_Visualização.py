@@ -200,20 +200,21 @@ def format_eixos_tematicos_table(json_str):
 def format_formas_contratacao(json_str):
     """
     Formata o JSON de formas de contratação em HTML,
-    mas agora exibe APENAS os detalhes das formas efetivamente selecionadas,
-    que estarão em "detalhes_por_forma".
+    exibindo somente os detalhes das formas selecionadas.
+    Agora, listas (ex.: múltiplos contratos ICMBio) são apresentadas corretamente como bullet points.
     """
     try:
         data = json.loads(json_str)
         if not data:
-            return "Nenhuma forma de contratação cadastrada."
+            return "<p>Nenhuma forma de contratação cadastrada.</p>"
 
-        # Parte 1: tabela_formas (com "Selecionado" True/False)
+        # Parte 1: Tabela de Formas de Contratação (Status Selecionado)
         tabela_formas = data.get("tabela_formas", [])
         if not tabela_formas:
             formas_html = "<p>Nenhuma forma de contratação listada.</p>"
         else:
-            formas_html = """<table border='1' style='width:100%; border-collapse: collapse;'>
+            formas_html = """
+<table border='1' style='width:100%; border-collapse: collapse;'>
 <thead>
 <tr>
 <th>Forma de Contratação</th>
@@ -225,7 +226,7 @@ def format_formas_contratacao(json_str):
             for item in tabela_formas:
                 forma = str(item.get("Forma de Contratação", "Sem descrição"))
                 selecionado = item.get("Selecionado", False)
-                status = "Selecionado" if selecionado else "Não selecionado"
+                status = "✅ Selecionado" if selecionado else "❌ Não selecionado"
                 formas_html += f"""
 <tr>
 <td>{html.escape(forma)}</td>
@@ -234,30 +235,38 @@ def format_formas_contratacao(json_str):
 """
             formas_html += "</tbody></table>"
 
-        # Parte 2: detalhes_por_forma => exibir só as que forem selecionadas
+        # Parte 2: Detalhes das Formas Selecionadas
         detalhes_html = ""
         detalhes_por_forma = data.get("detalhes_por_forma", {})
-        # Exibimos cada "forma" e seus detalhes como uma mini-tabela
+
         for forma, dict_det in detalhes_por_forma.items():
-            detalhes_html += f"<h5 style='margin-top: 10px;'>{html.escape(forma)}</h5>"
+            detalhes_html += f"<h5 style='margin-top: 15px;'>{html.escape(forma)}</h5>"
             if not dict_det:
-                detalhes_html += "<p>Sem detalhes para esta forma.</p>"
+                detalhes_html += "<p>Sem detalhes específicos.</p>"
                 continue
 
-            # Monta uma tabela chave-valor
-            detalhes_html += """<table border='1' style='width:100%; border-collapse: collapse;'>
+            # Monta uma tabela com os detalhes
+            detalhes_html += """
+<table border='1' style='width:100%; border-collapse: collapse;'>
 <thead>
-<tr>
-<th colspan='2'>Detalhes</th>
-</tr>
+<tr><th>Campo</th><th>Valor</th></tr>
 </thead>
 <tbody>
 """
+
             for k, v in dict_det.items():
+                # Verifica se o valor é uma lista
+                if isinstance(v, list):
+                    if v:
+                        # Converte para bullet points
+                        v = "<ul>" + "".join(f"<li>{html.escape(str(item))}</li>" for item in v) + "</ul>"
+                    else:
+                        v = "Nenhuma opção selecionada"
+
                 detalhes_html += f"""
 <tr>
-<td>{html.escape(str(k))}</td>
-<td>{html.escape(str(v))}</td>
+<td><strong>{html.escape(str(k))}</strong></td>
+<td>{v}</td>
 </tr>
 """
             detalhes_html += "</tbody></table>"
@@ -265,7 +274,9 @@ def format_formas_contratacao(json_str):
         return formas_html.strip() + "<br>" + detalhes_html.strip()
 
     except Exception as e:
-        return f"Erro ao formatar as formas de contratação: {str(e)}"
+        return f"<p>Erro ao formatar as formas de contratação: {html.escape(str(e))}</p>"
+
+
 
 
 
@@ -360,40 +371,7 @@ def format_float_br(value_str: str) -> str:
 def format_distribuicao_ucs(json_str):
     """
     Formata o JSON de distribuição por unidade em tabela HTML,
-    com formatação numérica para 'Valor Alocado'.
-    """
-    try:
-        data = json.loads(json_str)
-        if isinstance(data, list):
-            table_html = "<table border='1' cellpadding='4'>"
-            table_html += "<tr><th>Unidade</th><th>Ação de Aplicação</th><th>Valor Alocado</th></tr>"
-            for item in data:
-                unidade = item.get("Unidade", "")
-                acao = item.get("Acao", "")
-                valor = item.get("Valor Alocado", "")  # string, float, etc.
-                
-                # 1) Converte e formata o valor
-                valor_formatado = format_float_br(str(valor))
-                
-                table_html += f"<tr><td>{unidade}</td><td>{acao}</td><td>{valor_formatado}</td></tr>"
-            table_html += "</table>"
-            return table_html
-        return str(data)
-    except Exception:
-        return str(json_str)
-    
-
-def format_distribuicao_por_eixo(json_str: str) -> str:
-    """
-    Lê o JSON da distribuição, que tem colunas:
-      - Unidade
-      - Acao
-      - Valor Alocado
-      - (Possíveis Eixos)...
-      - Distribuir
-    Cria:
-      - Uma tabela para cada Eixo com (Unidade, Ação, ValorEixo)
-      - Uma tabela final com Resumo (Eixo, Soma).
+    agrupando os valores por 'Unidade' e 'Ação de Aplicação'.
     """
     try:
         data = json.loads(json_str)
@@ -402,111 +380,119 @@ def format_distribuicao_por_eixo(json_str: str) -> str:
 
         df = pd.DataFrame(data)
 
-        # Verifica se colunas mínimas existem
-        colunas_necessarias = {"Unidade", "Acao", "Valor Alocado", "Distribuir"}
-        if not colunas_necessarias.issubset(df.columns):
-            return "<p>Estrutura de distribuição inválida. Faltam colunas básicas.</p>"
+        # 🚀 **AGREGAR OS VALORES POR UNIDADE + AÇÃO**
+        df_aggregated = df.groupby(["Unidade", "Acao"], as_index=False)["Valor Alocado"].sum()
 
-        # Identificar as colunas de Eixo: ficam entre "Valor Alocado" e "Distribuir" no DataFrame
-        # Então, pegamos a lista de colunas
-        cols = list(df.columns)
-        idx_valor = cols.index("Valor Alocado")
-        idx_distribuir = cols.index("Distribuir")
-        
-        # Eixos são colunas no slice entre idx_valor+1 e idx_distribuir
-        # Exemplo: Valor Alocado = col n, Distribuir = col n+2, então col n+1 é Eixo
-        eixos_cols = cols[idx_valor+1 : idx_distribuir]  # ex.: ["Gestão Territorial Integrada", "Pesquisa", ...]
+        # Gerar tabela HTML formatada
+        table_html = """
+<table border='1' style='width:100%; border-collapse: collapse;'>
+<thead>
+<tr><th>Unidade</th><th>Ação de Aplicação</th><th style="text-align:right;">Valor Alocado</th></tr>
+</thead>
+<tbody>
+"""
+
+        for _, row in df_aggregated.iterrows():
+            unidade = html.escape(str(row["Unidade"]))
+            acao = html.escape(str(row["Acao"]))
+            valor_formatado = format_float_br(str(row["Valor Alocado"]))
+
+            table_html += f"""
+<tr><td>{unidade}</td><td>{acao}</td><td style="text-align:right;">{valor_formatado}</td></tr>
+"""
+
+        table_html += "</tbody></table>"
+
+        return table_html
+
+    except Exception as e:
+        return f"<p>Erro ao formatar distribuição por unidade: {html.escape(str(e))}</p>"
+
+    
+
+def format_distribuicao_por_eixo(json_str: str) -> str:
+    """
+    Lê o JSON da distribuição, cria tabelas de alocação por eixo temático,
+    agrupando os valores por Unidade + Ação + Eixo.
+    """
+    try:
+        data = json.loads(json_str)
+        if not data or not isinstance(data, list):
+            return "<p>Nenhuma informação de distribuição.</p>"
+
+        df = pd.DataFrame(data)
+
+        # Identifica os eixos dinamicamente
+        colunas_base = {"Unidade", "Acao", "Valor Alocado", "Distribuir"}
+        eixos_cols = [col for col in df.columns if col not in colunas_base]
 
         if not eixos_cols:
-            # Se não houver colunas intermediárias, não há eixos
-            return "<p>Nenhum eixo para exibir distribuição.</p>"
+            return "<p>Nenhum eixo temático identificado.</p>"
 
-        # Ordenar o DataFrame p/ ficar mais organizado
-        df.sort_values(by=["Unidade", "Acao"], inplace=True)
+        # 🚀 **AGREGAR OS VALORES PARA UNIDADE + AÇÃO + EIXO**
+        df_aggregated = df.groupby(["Unidade", "Acao"], as_index=False)[eixos_cols + ["Valor Alocado"]].sum()
 
         html_output = ""
 
-        # 1) Para cada Eixo, criar uma tabela
-        soma_por_eixo = {}  # Para armazenar o total de cada eixo
+        # Criar tabela por eixo
+        soma_por_eixo = {}
         for eixo in eixos_cols:
-            # Filtrar apenas as linhas que tenham valor > 0 nesse eixo
-            df_eixo = df[df[eixo] > 0].copy()
+            df_eixo = df_aggregated[df_aggregated[eixo] > 0].copy()
             if df_eixo.empty:
-                # Se não houver linhas com valor > 0 nesse eixo, ignoramos ou exibimos "nenhuma alocação"
                 continue
 
-            # Gera tabela HTML
-            table_html = """<table border='1' style='width:100%; border-collapse: collapse; margin-bottom:10px;">
+            # Gerar tabela de valores distribuídos por eixo
+            table_html = f"""
+<h5 style='margin-top:15px;'>Eixo: {html.escape(eixo)}</h5>
+<table border='1' style='width:100%; border-collapse: collapse;'>
 <thead>
-<tr>
-<th>Unidade</th>
-<th>Ação</th>
-<th style="text-align:right;">Valor {Eixo}</th>
-</tr>
+<tr><th>Unidade</th><th>Ação</th><th style="text-align:right;">Valor {html.escape(eixo)}</th></tr>
 </thead>
 <tbody>
-""".replace("{Eixo}", html.escape(eixo))
+"""
 
             total_eixo = 0.0
-            for _, row_eixo in df_eixo.iterrows():
-                unidade = html.escape(str(row_eixo["Unidade"]))
-                acao = html.escape(str(row_eixo["Acao"]))
-                valor_eixo = float(row_eixo[eixo])
-                valor_formatado = format_float_br(str(valor_eixo))
+            for _, row in df_eixo.iterrows():
+                unidade = html.escape(str(row["Unidade"]))
+                acao = html.escape(str(row["Acao"]))
+                valor_eixo = float(row[eixo])
                 total_eixo += valor_eixo
+                valor_formatado = format_float_br(str(valor_eixo))
 
                 table_html += f"""
-<tr>
-<td>{unidade}</td>
-<td>{acao}</td>
-<td style="text-align:right;">{valor_formatado}</td>
-</tr>
+<tr><td>{unidade}</td><td>{acao}</td><td style="text-align:right;">{valor_formatado}</td></tr>
 """
 
             table_html += "</tbody></table>"
-
-            # Soma e converte para BR
             soma_por_eixo[eixo] = total_eixo
             total_eixo_str = format_float_br(str(total_eixo))
 
-            # Adiciona no HTML de saída
-            html_output += f"<h4 style='margin-top:15px;'>Eixo: {html.escape(eixo)}</h4>"
-            html_output += table_html
-            html_output += f"<p><strong>Total do Eixo</strong>: {total_eixo_str}</p>"
-            html_output += "<hr>"
+            html_output += table_html + f"<p><strong>Total do Eixo</strong>: {total_eixo_str}</p><hr>"
 
-        # 2) Criar tabela final de Resumo por Eixo (se tiver eixos)
+        # Criar tabela de resumo por eixo
         if soma_por_eixo:
-            # Ordenar eixos por nome
-            html_output += "<h4>Resumo por Eixo</h4>"
-            table_resumo = """<table border='1' style='width:100%; border-collapse: collapse; margin-top:5px;">
+            html_output += "<h5>Resumo por Eixo</h5>"
+            table_resumo = """
+<table border='1' style='width:100%; border-collapse: collapse;'>
 <thead>
-<tr>
-<th>Eixo</th>
-<th style="text-align:right;">Valor Total</th>
-</tr>
+<tr><th>Eixo</th><th style="text-align:right;">Valor Total</th></tr>
 </thead>
 <tbody>
 """
-            for eixo_nome in sorted(soma_por_eixo.keys(), key=str.lower):
-                valor_total = format_float_br(str(soma_por_eixo[eixo_nome]))
-                table_resumo += f"""
-<tr>
-<td>{html.escape(eixo_nome)}</td>
-<td style="text-align:right;">{valor_total}</td>
-</tr>
-"""
+            for eixo_nome, valor_total in sorted(soma_por_eixo.items(), key=lambda x: x[0]):
+                valor_total_str = format_float_br(str(valor_total))
+                table_resumo += f"<tr><td>{html.escape(eixo_nome)}</td><td style='text-align:right;'>{valor_total_str}</td></tr>"
+
             table_resumo += "</tbody></table>"
             html_output += table_resumo
-        else:
-            if not html_output:
-                # Se nada foi gerado acima e soma_por_eixo está vazio => Ninguém tinha valor > 0
-                html_output = "<p>Nenhuma alocação positiva nos eixos selecionados.</p>"
 
-        return html_output.strip()
+        return html_output
 
     except Exception as e:
         return f"<p>Erro ao gerar distribuição: {html.escape(str(e))}</p>"
+
+
+
 
 
 
@@ -531,6 +517,7 @@ def sanitize_text(text: str) -> str:
 class PDF(FPDF):
     """
     Classe PDF customizada para adicionar header e footer em todas as páginas.
+    Agora, a função multi_cell() será utilizada para evitar quebra de layout.
     """
 
     def header(self):
@@ -545,6 +532,14 @@ class PDF(FPDF):
         self.set_font("Arial", "I", 8)
         page_num = "Página " + str(self.page_no())
         self.cell(0, 10, page_num, 0, 0, "C")
+
+def draw_wrapped_paragraph(pdf: PDF, text: str):
+    """
+    Escreve um parágrafo ajustando automaticamente o texto dentro do limite da página.
+    """
+    pdf.set_font("Arial", "", 10)
+    pdf.multi_cell(0, 5, sanitize_text(text), 0, 1)
+    pdf.ln(3)
 
 def draw_section_title(pdf: PDF, title: str):
     """
@@ -635,10 +630,10 @@ def draw_table(pdf: PDF, table_data: list, headers: list):
 # Nova Função de Criação do PDF        #
 ########################################
 
-def create_pdf(df: pd.DataFrame) -> PDF:
+def create_pdf(df: pd.DataFrame) -> str:
     """
-    Cria um objeto PDF contendo todas as iniciativas do DataFrame.
-    Cada iniciativa é exibida em uma página, com seções e tabelas.
+    Cria um PDF contendo todas as iniciativas do DataFrame.
+    Retorna o caminho do arquivo gerado para garantir o download correto.
     """
     pdf = PDF()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -654,51 +649,44 @@ def create_pdf(df: pd.DataFrame) -> PDF:
 
         # Seção: Objetivo Geral
         draw_section_title(pdf, "Objetivo Geral")
-        objetivo_geral = remove_html_for_pdf(str(row['objetivo_geral']))
-        draw_simple_paragraph(pdf, objetivo_geral)
+        draw_wrapped_paragraph(pdf, remove_html_for_pdf(str(row['objetivo_geral'])))
 
         # Seção: Objetivos Específicos
         draw_section_title(pdf, "Objetivos Específicos")
-        obj_espec = remove_html_for_pdf(format_objetivos_especificos(row['objetivos_especificos']))
-        draw_simple_paragraph(pdf, obj_espec)
+        draw_wrapped_paragraph(pdf, remove_html_for_pdf(format_objetivos_especificos(row['objetivos_especificos'])))
 
         # Seção: Introdução
         draw_section_title(pdf, "Introdução")
-        intro = remove_html_for_pdf(row['introducao'])
-        draw_simple_paragraph(pdf, intro)
+        draw_wrapped_paragraph(pdf, remove_html_for_pdf(row['introducao']))
 
         # Seção: Justificativa
         draw_section_title(pdf, "Justificativa")
-        justif = remove_html_for_pdf(row['justificativa'])
-        draw_simple_paragraph(pdf, justif)
+        draw_wrapped_paragraph(pdf, remove_html_for_pdf(row['justificativa']))
 
         # Seção: Metodologia
         draw_section_title(pdf, "Metodologia")
-        met = remove_html_for_pdf(row['metodologia'])
-        draw_simple_paragraph(pdf, met)
+        draw_wrapped_paragraph(pdf, remove_html_for_pdf(row['metodologia']))
 
         # Seção: Eixos Temáticos
         draw_section_title(pdf, "Eixos Temáticos")
-        eixos_text = remove_html_for_pdf(format_eixos_tematicos_table(row.get('eixos_tematicos', '')))
-        draw_simple_paragraph(pdf, eixos_text)
+        draw_wrapped_paragraph(pdf, remove_html_for_pdf(format_eixos_tematicos_table(row.get('eixos_tematicos', ''))))
 
         # Seção: Insumos
         draw_section_title(pdf, "Insumos")
-        insumos_text = remove_html_for_pdf(format_insumos(row.get('insumos', '')))
-        draw_simple_paragraph(pdf, insumos_text)
+        draw_wrapped_paragraph(pdf, remove_html_for_pdf(format_insumos(row.get('insumos', ''))))
 
-        # Seção: Distribuição por Unidade (virando tabela)
+        # Seção: Distribuição por Unidade
         draw_section_title(pdf, "Distribuição por Unidade")
         distr_str = row.get('distribuicao_ucs', '')
         try:
             distr_data = json.loads(distr_str) if distr_str else []
         except:
             distr_data = []
-        if isinstance(distr_data, list) and len(distr_data) > 0:
+        if distr_data:
             headers = ["Unidade", "Acao", "Valor Alocado"]
             draw_table(pdf, distr_data, headers)
         else:
-            draw_simple_paragraph(pdf, "Nenhuma informação sobre distribuição de unidades.")
+            draw_wrapped_paragraph(pdf, "Nenhuma informação sobre distribuição de unidades.")
 
         # Seção: Formas de Contratação
         draw_section_title(pdf, "Formas de Contratação")
@@ -712,38 +700,26 @@ def create_pdf(df: pd.DataFrame) -> PDF:
         detalhes_formas = formas_json.get("detalhes", {})
 
         if tabela_formas:
-            data_table = []
-            for item in tabela_formas:
-                forma = item.get("Forma de Contratação", "Sem descrição")
-                selecionado = "Selecionado" if item.get("Selecionado", False) else "Não Selecionado"
-                data_table.append([forma, selecionado])
+            data_table = [[item.get("Forma de Contratação", "Sem descrição"), "Selecionado" if item.get("Selecionado", False) else "Não Selecionado"] for item in tabela_formas]
             headers_formas = ["Forma de Contratação", "Status"]
             draw_table(pdf, data_table, headers_formas)
         else:
-            draw_simple_paragraph(pdf, "Não há formas de contratação listadas.")
+            draw_wrapped_paragraph(pdf, "Não há formas de contratação listadas.")
 
         if detalhes_formas:
             draw_section_title(pdf, "Detalhes das Formas de Contratação")
-            detalhes_dic = {}
-            for k, v in detalhes_formas.items():
-                if isinstance(v, list):
-                    v = ", ".join(map(str, v)) if v else "Não informado"
-                elif not v:
-                    v = "Não informado"
-                detalhes_dic[k] = str(v)
+            detalhes_dic = {k: ", ".join(map(str, v)) if isinstance(v, list) else str(v) for k, v in detalhes_formas.items()}
             draw_key_value_table(pdf, detalhes_dic)
 
         # Seção: Demais Informações
         draw_section_title(pdf, "Demais Informações")
-        demais_info = remove_html_for_pdf(process_generic_json(row.get('demais_informacoes', '')))
-        draw_simple_paragraph(pdf, demais_info)
+        draw_wrapped_paragraph(pdf, remove_html_for_pdf(process_generic_json(row.get('demais_informacoes', ''))))
 
         # Responsável e Data/Hora
         pdf.set_font("Arial", "I", 10)
         usuario_resp = "Responsável: " + str(row['usuario'])
         data_reg = datetime.strptime(row['data_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')
-        resp_line = usuario_resp + " | Data/Hora: " + data_reg
-        pdf.cell(0, 8, sanitize_text(resp_line), 0, 1, "L")
+        pdf.cell(0, 8, sanitize_text(f"{usuario_resp} | Data/Hora: {data_reg}"), 0, 1, "L")
 
         # Linha divisória
         pdf.ln(3)
@@ -752,7 +728,11 @@ def create_pdf(df: pd.DataFrame) -> PDF:
         pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
         pdf.ln(5)
 
-    return pdf
+    # Salva PDF temporariamente
+    pdf_path = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name
+    pdf.output(pdf_path, "F")
+
+    return pdf_path
 
 ########################################
 # CSS para Layout na Interface         #
@@ -992,23 +972,25 @@ for idx, row in df_filtrado.iterrows():
 st.markdown("</div>", unsafe_allow_html=True)
 
 
+
+
+
 ########################################
 # Geração do PDF                       #
 ########################################
 
 if st.button("📄 Gerar Extrato Completo em PDF", type='secondary'):
     with st.spinner("Gerando Extrato em PDF..."):
-        pdf = create_pdf(df_filtrado)
-        # Gera os bytes do PDF (texto já sanitizado)
-        pdf_bytes = pdf.output(dest="S").encode("latin1", errors="replace")
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(pdf_bytes)
-            tmp_path = tmp.name
-        
+        pdf_path = create_pdf(df_filtrado)
+
+        with open(pdf_path, "rb") as pdf_file:
+            pdf_bytes = pdf_file.read()
+
         st.download_button(
             label="⬇️ Download do Extrato (PDF)",
             data=pdf_bytes,
-            file_name="extrato_iniciativa_" + str(iniciativa_selecionada) + ".pdf",
+            file_name=f"extrato_iniciativa_{iniciativa_selecionada}.pdf",
             mime="application/pdf"
         )
-        pdf_viewer(tmp_path)
+
+        pdf_viewer(pdf_path)

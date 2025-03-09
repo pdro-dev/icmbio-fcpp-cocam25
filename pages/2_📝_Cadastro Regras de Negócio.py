@@ -910,12 +910,11 @@ with st.form("form_textos_resumo"):
     # -------------------------------------------
     # 6) UNIDADES DE CONSERVAÇÃO - Distribuição de Recursos
     # -------------------------------------------
+
     with tab_uc:
         st.subheader("Distribuição de Recursos por Eixo")
 
-        # (A) Verifica primeiro se há distribuição_ucs salva no tf_cadastro_regras_negocio
         conn = sqlite3.connect(DB_PATH)
-        # Pega o último registro (mais recente) dessa iniciativa
         row_dist = conn.execute("""
             SELECT distribuicao_ucs
             FROM tf_cadastro_regras_negocio
@@ -924,7 +923,6 @@ with st.form("form_textos_resumo"):
             LIMIT 1
         """, (nova_iniciativa,)).fetchone()
 
-        # Consulta tf_cadastros_iniciativas para fallback
         query_fallback = """
             SELECT 
                 "Unidade de Conservação" AS Unidade,
@@ -937,34 +935,27 @@ with st.form("form_textos_resumo"):
         df_unidades_raw = pd.read_sql_query(query_fallback, conn, params=[nova_iniciativa])
         conn.close()
 
-        # Se já existe algo em tf_cadastro_regras_negocio, priorizamos esse valor
-        df_db = pd.DataFrame()  # df vazio por enquanto
-        if row_dist and row_dist[0]:  # Significa que tem algo no campo distribuicao_ucs
+        df_db = pd.DataFrame()
+        if row_dist and row_dist[0]:
             try:
-                dist_list = json.loads(row_dist[0])  # carrega JSON
-                df_db = pd.DataFrame(dist_list)      # converte em DataFrame
+                dist_list = json.loads(row_dist[0])
+                df_db = pd.DataFrame(dist_list)
             except:
                 df_db = pd.DataFrame()
 
-        # Lógica de qual DF usar no "primeiro carregamento" ou quando mudamos de iniciativa
         if "ultima_iniciativa" not in st.session_state or st.session_state["ultima_iniciativa"] != nova_iniciativa:
             st.session_state["ultima_iniciativa"] = nova_iniciativa
-
-            # (B) Se df_db não está vazio, usamos ele; caso contrário, fallback tf_cadastros_iniciativas
             if not df_db.empty:
                 st.session_state["df_uc_editado"] = df_db.copy()
             else:
                 st.session_state["df_uc_editado"] = df_unidades_raw.copy()
 
-        # Se df_unidades_raw e df_db também estiverem vazios, alertamos
         if df_unidades_raw.empty and df_db.empty:
             st.warning("Nenhuma unidade de conservação encontrada para esta iniciativa.")
             st.stop()
 
-        # A partir daqui, trabalhamos com st.session_state["df_uc_editado"]
-        # (que já foi setado acima conforme prioridade).
         def recalcular_saldo():
-            data_dict = st.session_state["editor_uc"]  # Deltas do data_editor
+            data_dict = st.session_state["editor_uc"]
             df_master = st.session_state["df_uc_editado"].copy()
 
             edited_rows = data_dict.get("edited_rows", {})
@@ -973,43 +964,38 @@ with st.form("form_textos_resumo"):
                 for col_name, new_value in changed_cols.items():
                     df_master.loc[row_idx, col_name] = new_value
 
-            # Cria ou atualiza as colunas de Eixos e "Valor Alocado"
             df_master["Valor Alocado"] = pd.to_numeric(df_master.get("Valor Alocado", 0), errors="coerce").fillna(0)
             colunas_eixos = [eixo["nome_eixo"] for eixo in st.session_state["eixos_tematicos"]]
 
-            # Garante que as colunas de eixos existem e são numéricas
             for eixo_nome in colunas_eixos:
                 if eixo_nome not in df_master.columns:
                     df_master[eixo_nome] = 0
                 df_master[eixo_nome] = pd.to_numeric(df_master[eixo_nome], errors="coerce").fillna(0)
 
-            # Cria coluna Distribuir
             df_master["Distribuir"] = df_master["Valor Alocado"] - df_master[colunas_eixos].sum(axis=1)
 
             st.session_state["df_uc_editado"] = df_master
 
-        # Copiamos para manipular localmente
         df_editavel = st.session_state["df_uc_editado"].copy()
 
-        # Garante colunas fixas
         colunas_fixas = ["Unidade", "Acao", "Valor Alocado"]
         for col in colunas_fixas:
             if col not in df_editavel.columns:
                 df_editavel[col] = 0
 
-        # Colunas dos eixos
         colunas_eixos = [eixo["nome_eixo"] for eixo in st.session_state["eixos_tematicos"]]
         for eixo_nome in colunas_eixos:
             if eixo_nome not in df_editavel.columns:
                 df_editavel[eixo_nome] = 0
 
-        # Calcula "Distribuir"
         df_editavel["Valor Alocado"] = pd.to_numeric(df_editavel["Valor Alocado"], errors="coerce").fillna(0)
         for eixo_nome in colunas_eixos:
             df_editavel[eixo_nome] = pd.to_numeric(df_editavel[eixo_nome], errors="coerce").fillna(0)
         df_editavel["Distribuir"] = df_editavel["Valor Alocado"] - df_editavel[colunas_eixos].sum(axis=1)
 
-        # Ordena colunas
+        # 🚀 **AGREGAR OS DADOS POR UNIDADE + AÇÃO**
+        df_editavel = df_editavel.groupby(["Unidade", "Acao"], as_index=False).sum()
+
         colunas_ordenadas = colunas_fixas + ["Distribuir"] + colunas_eixos
         df_editavel = df_editavel[colunas_ordenadas]
 
@@ -1027,6 +1013,7 @@ with st.form("form_textos_resumo"):
             on_change=recalcular_saldo,
             hide_index=True
         )
+
 
         # # Exemplo: Botão p/ persistir no banco (ou pode ser salvo lá no "Salvar Alterações")
         # if st.button("Salvar Distribuição"):
@@ -1093,20 +1080,26 @@ with st.form("form_textos_resumo"):
                     help="Inclua aqui quaisquer observações relativas ao contrato CAIXA."
                 )
 
+
         # -------------------------------------------------------------------------
         # 4.2) Se "Contrato ICMBio" estiver selecionado
         # -------------------------------------------------------------------------
         if "Contrato ICMBio" in selected_forms:
             with st.expander("📌 Contrato ICMBio", expanded=False):
 
-                # Exemplo de lista suspensa de contratos
-                contratos_disponiveis = ["Contrato ICMBio 1", "Contrato ICMBio 2"]
-                st.session_state["contrato_icmbio_escolhido"] = st.selectbox(
+                # 🔹 Lista suspensa de múltiplas escolhas (Multiselect)
+                contratos_disponiveis = ["Contrato ICMBio 1", "Contrato ICMBio 2", "Contrato ICMBio 3"]
+                
+                # Convertendo o estado anterior (se houver) em uma lista
+                selecao_anterior = st.session_state.get("contrato_icmbio_escolhido", [])
+                if not isinstance(selecao_anterior, list):
+                    selecao_anterior = [selecao_anterior] if selecao_anterior else []
+
+                st.session_state["contrato_icmbio_escolhido"] = st.multiselect(
                     "Quais contratos do ICMBio possuem os insumos e serviços previstos?",
                     options=contratos_disponiveis,
-                    index=contratos_disponiveis.index(
-                        st.session_state.get("contrato_icmbio_escolhido", contratos_disponiveis[0])
-                    ) if "contrato_icmbio_escolhido" in st.session_state else 0
+                    default=selecao_anterior,
+                    help="Selecione um ou mais contratos."
                 )
 
                 # Radio para saber se a coordenação é gestora
@@ -1123,6 +1116,7 @@ with st.form("form_textos_resumo"):
                     "Qual a justificativa para utilização desses contratos em detrimento dos contratos realizados pela CAIXA?",
                     value=st.session_state.get("justificativa_icmbio", "")
                 )
+
 
         # -------------------------------------------------------------------------
         # 4.3) Se "Fundação de Apoio credenciada pelo ICMBio" estiver selecionado
