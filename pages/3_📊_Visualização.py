@@ -1,19 +1,23 @@
+###############################################################################
+#                       1. IMPORTAÇÕES E CONFIGURAÇÕES                        #
+###############################################################################
 import streamlit as st
 import sqlite3
 import pandas as pd
 import json
-from fpdf import FPDF
 from datetime import datetime
-import textwrap
 import html
 import re
 import tempfile
-from streamlit_pdf_viewer import pdf_viewer  # pip install streamlit-pdf-viewer
+from io import BytesIO
 
-########################################
-# Verificação de Login e Configuração  #
-########################################
+# PDF com xhtml2pdf
+from xhtml2pdf import pisa
 
+# Visualização de PDF
+from streamlit_pdf_viewer import pdf_viewer
+
+# Verificação de login no Streamlit
 if "usuario_logado" not in st.session_state or not st.session_state["usuario_logado"]:
     st.warning("🔒 Acesso negado! Faça login na página principal para acessar esta seção.")
     st.stop()
@@ -25,15 +29,13 @@ st.set_page_config(
 )
 st.subheader("📊 Visualização de Cadastros Realizados")
 
-########################################
-# Funções de Carregamento de Dados     #
-########################################
-
+###############################################################################
+#                    2. FUNÇÕES DE CARREGAMENTO DE DADOS                      #
+###############################################################################
 def load_iniciativas(setor: str, perfil: str) -> pd.DataFrame:
+    """Carrega iniciativas do banco SQLite conforme setor e perfil."""
     conn = sqlite3.connect("database/app_data.db")
-    
     if perfil in ("admin", "cocam"):
-        # Usuários "admin" ou "cocam" veem TODAS as iniciativas
         query = """
         SELECT r.*, i.nome_iniciativa
         FROM tf_cadastro_regras_negocio r
@@ -48,7 +50,6 @@ def load_iniciativas(setor: str, perfil: str) -> pd.DataFrame:
         """
         df = pd.read_sql_query(query, conn)
     else:
-        # Demais usuários veem apenas iniciativas do seu setor
         query = """
         SELECT r.*, i.nome_iniciativa
         FROM tf_cadastro_regras_negocio r
@@ -64,88 +65,75 @@ def load_iniciativas(setor: str, perfil: str) -> pd.DataFrame:
         ORDER BY r.data_hora DESC
         """
         df = pd.read_sql_query(query, conn, params=[setor])
-    
     conn.close()
     return df
 
 
 def load_acoes_map():
-    """
-    Retorna um dicionário de mapeamento entre id_acao e nome_acao.
-    """
+    """Retorna dict id_acao -> nome_acao."""
     conn = sqlite3.connect("database/app_data.db")
     df = pd.read_sql_query("SELECT id_ac, nome FROM td_samge_acoes_manejo", conn)
     conn.close()
     return {str(row['id_ac']): row['nome'] for _, row in df.iterrows()}
 
+
 def load_insumos_map():
-    """
-    Retorna um dicionário de mapeamento entre id_insumo e descricao_insumo.
-    """
+    """Retorna dict id_insumo -> descricao_insumo."""
     conn = sqlite3.connect("database/app_data.db")
     df = pd.read_sql_query("SELECT id, descricao_insumo FROM td_insumos", conn)
     conn.close()
     return {str(row['id']): row['descricao_insumo'] for _, row in df.iterrows()}
 
-# Carregamento de mapeamentos
+
 acoes_map = load_acoes_map()
 insumos_map = load_insumos_map()
 
-########################################
-# Funções de Formatação de Conteúdo    #
-########################################
+###############################################################################
+#                      3. FUNÇÕES DE FORMATAÇÃO DE CONTEÚDO (HTML)           #
+###############################################################################
+def safe_html(value: str) -> str:
+    if value is None:
+        value = ""
+    return html.escape(str(value)).replace("\n", "<br>")
+
 
 def format_objetivos_especificos(json_str):
-    """
-    Formata o JSON de objetivos específicos em uma lista de bullet points (HTML).
-    """
+    """Formata JSON de objetivos específicos em HTML (<ul>...</ul>)"""
     try:
         data = json.loads(json_str)
-        # Se for uma lista (ex.: ["Objetivo 1", "Objetivo 2"])
         if isinstance(data, list):
-            if not data:  # lista vazia
+            if not data:
                 return "Nenhum objetivo específico."
-            # Monta uma <ul> com <li> para cada item
             html_list = "<ul>"
             for item in data:
-                # Escapa qualquer caractere especial
                 item_escaped = html.escape(str(item))
                 html_list += f"<li>{item_escaped}</li>"
             html_list += "</ul>"
             return html_list
-        
-        # Se for um dicionário
+
         elif isinstance(data, dict):
-            if not data:  # dicionário vazio
+            if not data:
                 return "Nenhum objetivo específico."
-            # Você pode decidir como exibir: bullet points para cada chave:valor
             html_list = "<ul>"
             for k, v in data.items():
                 item_escaped = f"{html.escape(str(k))}: {html.escape(str(v))}"
                 html_list += f"<li>{item_escaped}</li>"
             html_list += "</ul>"
             return html_list
-        
-        # Caso não seja lista nem dict, retorna texto puro
+
         return html.escape(str(data))
-    
     except Exception:
-        # Se não conseguir carregar como JSON, retorna o texto bruto escapado
         return html.escape(json_str)
 
 
 def format_eixos_tematicos_table(json_str):
-    """
-    Gera uma tabela HTML com colunas: Eixo Temático | Ação de Manejo | Insumos.
-    Cada linha corresponde a uma (eixo, ação, insumos).
-    """
+    """Tabela de Eixos Temáticos (Eixo, Ação de Manejo, Insumos) em HTML."""
     try:
         data = json.loads(json_str)
         if not data:
             return "Nenhum eixo temático cadastrado."
 
-        # Início da tabela (sem indentação dentro das aspas)
-        table_html = """<table border='1' style='width:100%; border-collapse: collapse;'>
+        table_html = """<table>
 <thead>
 <tr>
 <th>Eixo Temático</th>
@@ -155,11 +143,9 @@ def format_eixos_tematicos_table(json_str):
 </thead>
 <tbody>
 """
-
         for eixo in data:
             nome_eixo = eixo.get("nome_eixo", "Sem nome")
             acoes = eixo.get("acoes_manejo", {})
-
             if not acoes:
                 table_html += f"""
 <tr>
@@ -173,14 +159,9 @@ def format_eixos_tematicos_table(json_str):
                     nome_acao = acoes_map.get(str(acao_id), f"Ação {acao_id}")
                     insumos_list = detalhes.get("insumos", [])
                     if insumos_list:
-                        insumos_html = "<ul>"
-                        for i in insumos_list:
-                            insumo_nome = insumos_map.get(str(i), str(i))
-                            insumos_html += f"<li>{insumo_nome}</li>"
-                        insumos_html += "</ul>"
+                        insumos_html = ", ".join(insumos_map.get(str(i), str(i)) for i in insumos_list)
                     else:
-                        insumos_html = "Sem insumos cadastrados"
-
+                        insumos_html = "-"
                     table_html += f"""
 <tr>
 <td>{nome_eixo}</td>
@@ -188,38 +169,27 @@ def format_eixos_tematicos_table(json_str):
 <td>{insumos_html}</td>
 </tr>
 """
-
         table_html += "</tbody></table>"
         return table_html.strip()
-
     except Exception as e:
         return f"Erro ao gerar tabela de Eixos Temáticos: {str(e)}"
 
 
-
 def format_formas_contratacao(json_str):
-    """
-    Formata o JSON de formas de contratação em HTML,
-    exibindo somente os detalhes das formas selecionadas.
-    Agora, listas (ex.: múltiplos contratos ICMBio) são apresentadas corretamente como bullet points.
-    """
+    """Tabelas de Formas de Contratação e detalhes, em HTML."""
     try:
         data = json.loads(json_str)
         if not data:
             return "<p>Nenhuma forma de contratação cadastrada.</p>"
 
-        # Parte 1: Tabela de Formas de Contratação (Status Selecionado)
         tabela_formas = data.get("tabela_formas", [])
         if not tabela_formas:
             formas_html = "<p>Nenhuma forma de contratação listada.</p>"
         else:
             formas_html = """
-<table border='1' style='width:100%; border-collapse: collapse;'>
+<table>
 <thead>
-<tr>
-<th>Forma de Contratação</th>
-<th>Status</th>
-</tr>
+<tr><th>Forma de Contratação</th><th>Status</th></tr>
 </thead>
 <tbody>
 """
@@ -235,93 +205,63 @@ def format_formas_contratacao(json_str):
 """
             formas_html += "</tbody></table>"
 
-        # Parte 2: Detalhes das Formas Selecionadas
         detalhes_html = ""
         detalhes_por_forma = data.get("detalhes_por_forma", {})
-
         for forma, dict_det in detalhes_por_forma.items():
-            detalhes_html += f"<h5 style='margin-top: 15px;'>{html.escape(forma)}</h5>"
+            detalhes_html += f"<h4>{html.escape(forma)}</h4>"
             if not dict_det:
                 detalhes_html += "<p>Sem detalhes específicos.</p>"
                 continue
 
-            # Monta uma tabela com os detalhes
             detalhes_html += """
-<table border='1' style='width:100%; border-collapse: collapse;'>
+<table>
 <thead>
 <tr><th>Campo</th><th>Valor</th></tr>
 </thead>
 <tbody>
 """
-
             for k, v in dict_det.items():
-                # Verifica se o valor é uma lista
                 if isinstance(v, list):
                     if v:
-                        # Converte para bullet points
                         v = "<ul>" + "".join(f"<li>{html.escape(str(item))}</li>" for item in v) + "</ul>"
                     else:
                         v = "Nenhuma opção selecionada"
-
                 detalhes_html += f"""
 <tr>
-<td><strong>{html.escape(str(k))}</strong></td>
+<td>{html.escape(str(k))}</td>
 <td>{v}</td>
 </tr>
 """
             detalhes_html += "</tbody></table>"
 
         return formas_html.strip() + "<br>" + detalhes_html.strip()
-
     except Exception as e:
         return f"<p>Erro ao formatar as formas de contratação: {html.escape(str(e))}</p>"
 
 
-
-
-
 def format_insumos(json_str):
-    """
-    Formata o JSON de insumos, substituindo IDs por descrições via insumos_map
-    e exibindo em ordem alfabética.
-    """
+    """Lista de insumos (IDs -> descrições) ou dict, em HTML."""
     try:
         data = json.loads(json_str)
-        # Se for lista de IDs
         if isinstance(data, list):
-            # Mapeia cada ID para a descrição e ordena alfabeticamente
             result = [insumos_map.get(str(insumo), str(insumo)) for insumo in data]
-            result = sorted(result, key=lambda x: x.lower())  # Ordenação ignorando maiúsc/minúsc
-
-            # Cria bullets:
-            # Se a lista estiver vazia, retorna algo como "Nenhum insumo"
+            result = sorted(result, key=lambda x: x.lower())
             if not result:
                 return "Nenhum insumo cadastrado."
-
             return "- " + "<br>- ".join(result)
-
-        # Se for um dicionário (chave: valor)
         elif isinstance(data, dict):
-            # Opcional: ordenar por chave (alfabética) antes de exibir
             sorted_items = sorted(data.items(), key=lambda x: str(x[0]).lower())
-
-            # Monta string "chave: valor" para cada par
             lines = []
             for k, v in sorted_items:
                 lines.append(f"{k}: {v}")
             return "<br>".join(lines)
-
-        # Caso não seja lista nem dict
         return str(data)
-
     except Exception:
         return str(json_str)
 
 
-def process_generic_json(field):
-    """
-    Converte um JSON simples em uma listagem ou string legível, substituindo valores vazios por 'Não informado'.
-    """
+def process_generic_json(field: str) -> str:
+    """Formata JSON simples (list/dict) em bullet ou key:value (HTML)."""
     try:
         data = json.loads(field)
         if isinstance(data, list):
@@ -336,144 +276,103 @@ def process_generic_json(field):
         return str(data)
     except Exception:
         return str(field)
-    
+
+
 def format_float_br(value_str: str) -> str:
-    """
-    Tenta converter value_str em float e formata em estilo brasileiro:
-    - separador de milhar = ponto
-    - separador decimal = vírgula
-    - 2 casas decimais
-    Caso não seja possível converter, retorna a string original.
-    """
+    """Converte float p/ estilo brasileiro (1.234,56)."""
     if not value_str:
         return ""
     try:
-        # Converte para float
         val = float(value_str)
     except ValueError:
-        return value_str  # Se não for numérico, retorna sem formatação
-
-    # Formata no estilo "1.234,56"
-    # 1) Formata no estilo en_US => "1,234.56"
-    val_en = f"{val:,.2f}"
-    # 2) Troca ponto <-> vírgula
-    #    - No "1,234.56": a vírgula separa milhar e o ponto a casa decimal
-    #    - Precisamos "1.234,56"
+        return value_str
+    val_en = f"{val:,.2f}"  
     parts = val_en.split(".")
-    # parts[0] = "1,234"
-    integer_part = parts[0].replace(",", ".")  # "1.234"
-    decimal_part = parts[1]  # "56"
-    val_br = integer_part + "," + decimal_part  # "1.234,56"
+    integer_part = parts[0].replace(",", ".")
+    decimal_part = parts[1]
+    val_br = integer_part + "," + decimal_part
     return val_br
 
 
-
-def format_distribuicao_ucs(json_str):
-    """
-    Formata o JSON de distribuição por unidade em tabela HTML,
-    agrupando os valores por 'Unidade' e 'Ação de Aplicação'.
-    """
+def format_distribuicao_ucs(json_str: str) -> str:
+    """Tabela HTML para distribuição por unidade."""
     try:
         data = json.loads(json_str)
         if not data or not isinstance(data, list):
             return "<p>Nenhuma informação de distribuição.</p>"
 
         df = pd.DataFrame(data)
-
-        # 🚀 **AGREGAR OS VALORES POR UNIDADE + AÇÃO**
         df_aggregated = df.groupby(["Unidade", "Acao"], as_index=False)["Valor Alocado"].sum()
 
-        # Gerar tabela HTML formatada
         table_html = """
-<table border='1' style='width:100%; border-collapse: collapse;'>
+<table>
 <thead>
 <tr><th>Unidade</th><th>Ação de Aplicação</th><th style="text-align:right;">Valor Alocado</th></tr>
 </thead>
 <tbody>
 """
-
-        for _, row in df_aggregated.iterrows():
-            unidade = html.escape(str(row["Unidade"]))
-            acao = html.escape(str(row["Acao"]))
-            valor_formatado = format_float_br(str(row["Valor Alocado"]))
-
+        for _, row_ in df_aggregated.iterrows():
+            unidade = html.escape(str(row_["Unidade"]))
+            acao = html.escape(str(row_["Acao"]))
+            valor_formatado = format_float_br(str(row_["Valor Alocado"]))
             table_html += f"""
 <tr><td>{unidade}</td><td>{acao}</td><td style="text-align:right;">{valor_formatado}</td></tr>
 """
-
         table_html += "</tbody></table>"
-
         return table_html
-
     except Exception as e:
         return f"<p>Erro ao formatar distribuição por unidade: {html.escape(str(e))}</p>"
 
-    
 
 def format_distribuicao_por_eixo(json_str: str) -> str:
-    """
-    Lê o JSON da distribuição, cria tabelas de alocação por eixo temático,
-    agrupando os valores por Unidade + Ação + Eixo.
-    """
+    """Tabela(s) HTML da distribuição por eixo."""
     try:
         data = json.loads(json_str)
         if not data or not isinstance(data, list):
             return "<p>Nenhuma informação de distribuição.</p>"
 
         df = pd.DataFrame(data)
-
-        # Identifica os eixos dinamicamente
         colunas_base = {"Unidade", "Acao", "Valor Alocado", "Distribuir"}
         eixos_cols = [col for col in df.columns if col not in colunas_base]
-
         if not eixos_cols:
             return "<p>Nenhum eixo temático identificado.</p>"
 
-        # 🚀 **AGREGAR OS VALORES PARA UNIDADE + AÇÃO + EIXO**
         df_aggregated = df.groupby(["Unidade", "Acao"], as_index=False)[eixos_cols + ["Valor Alocado"]].sum()
 
         html_output = ""
-
-        # Criar tabela por eixo
         soma_por_eixo = {}
         for eixo in eixos_cols:
             df_eixo = df_aggregated[df_aggregated[eixo] > 0].copy()
             if df_eixo.empty:
                 continue
 
-            # Gerar tabela de valores distribuídos por eixo
             table_html = f"""
-<h5 style='margin-top:15px;'>Eixo: {html.escape(eixo)}</h5>
-<table border='1' style='width:100%; border-collapse: collapse;'>
+<h4>Eixo: {html.escape(eixo)}</h4>
+<table>
 <thead>
 <tr><th>Unidade</th><th>Ação</th><th style="text-align:right;">Valor {html.escape(eixo)}</th></tr>
 </thead>
 <tbody>
 """
-
             total_eixo = 0.0
-            for _, row in df_eixo.iterrows():
-                unidade = html.escape(str(row["Unidade"]))
-                acao = html.escape(str(row["Acao"]))
-                valor_eixo = float(row[eixo])
+            for _, row_ in df_eixo.iterrows():
+                unidade = html.escape(str(row_["Unidade"]))
+                acao = html.escape(str(row_["Acao"]))
+                valor_eixo = float(row_[eixo])
                 total_eixo += valor_eixo
                 valor_formatado = format_float_br(str(valor_eixo))
-
                 table_html += f"""
 <tr><td>{unidade}</td><td>{acao}</td><td style="text-align:right;">{valor_formatado}</td></tr>
 """
-
             table_html += "</tbody></table>"
             soma_por_eixo[eixo] = total_eixo
             total_eixo_str = format_float_br(str(total_eixo))
-
             html_output += table_html + f"<p><strong>Total do Eixo</strong>: {total_eixo_str}</p><hr>"
 
-        # Criar tabela de resumo por eixo
         if soma_por_eixo:
-            html_output += "<h5>Resumo por Eixo</h5>"
+            html_output += "<h4>Resumo por Eixo</h4>"
             table_resumo = """
-<table border='1' style='width:100%; border-collapse: collapse;'>
+<table>
 <thead>
 <tr><th>Eixo</th><th style="text-align:right;">Valor Total</th></tr>
 </thead>
@@ -482,262 +381,70 @@ def format_distribuicao_por_eixo(json_str: str) -> str:
             for eixo_nome, valor_total in sorted(soma_por_eixo.items(), key=lambda x: x[0]):
                 valor_total_str = format_float_br(str(valor_total))
                 table_resumo += f"<tr><td>{html.escape(eixo_nome)}</td><td style='text-align:right;'>{valor_total_str}</td></tr>"
-
             table_resumo += "</tbody></table>"
             html_output += table_resumo
 
         return html_output
-
     except Exception as e:
         return f"<p>Erro ao gerar distribuição: {html.escape(str(e))}</p>"
 
 
+LABEL_MAP = {
+    "diretoria": "Diretoria Responsável",
+    "coordenacao_geral": "Coordenação Geral",
+    "coordenacao": "Coordenação",
+    "demandante": "Setor Demandante"
+}
 
+def format_demais_informacoes(json_str: str) -> str:
+    """Formata 'Demais Informações' em HTML (bullets se dicionário ou lista)."""
+    try:
+        data = json.loads(json_str)
+    except:
+        return html.escape(json_str)
 
-
-
-########################################
-# Funções Auxiliares para o PDF        #
-########################################
-
-def remove_html_for_pdf(text: str) -> str:
-    """
-    Remove tags HTML e converte <br> para quebras de linha.
-    """
-    text = text.replace("<br>", "\n")
-    text = re.sub(r"<.*?>", "", text)
-    return html.unescape(text)
-
-def sanitize_text(text: str) -> str:
-    """
-    Converte o texto para Latin-1, substituindo caracteres problemáticos.
-    """
-    return text.encode("latin1", errors="replace").decode("latin1")
-
-class PDF(FPDF):
-    """
-    Classe PDF customizada para adicionar header e footer em todas as páginas.
-    Agora, a função multi_cell() será utilizada para evitar quebra de layout.
-    """
-
-    def header(self):
-        # Título no topo de cada página
-        self.set_font("Arial", "B", 12)
-        self.cell(0, 10, sanitize_text("Relatório de Iniciativas"), 0, 1, "C")
-        self.ln(5)
-
-    def footer(self):
-        # Rodapé com número da página
-        self.set_y(-15)
-        self.set_font("Arial", "I", 8)
-        page_num = "Página " + str(self.page_no())
-        self.cell(0, 10, page_num, 0, 0, "C")
-
-def draw_wrapped_paragraph(pdf: PDF, text: str):
-    """
-    Escreve um parágrafo ajustando automaticamente o texto dentro do limite da página.
-    """
-    pdf.set_font("Arial", "", 10)
-    pdf.multi_cell(0, 5, sanitize_text(text), 0, 1)
-    pdf.ln(3)
-
-def draw_section_title(pdf: PDF, title: str):
-    """
-    Desenha um título de seção em negrito.
-    """
-    pdf.set_font("Arial", "B", 12)
-    pdf.set_text_color(0, 0, 0)  # preto
-    pdf.cell(0, 8, sanitize_text(title), 0, 1)
-    pdf.ln(2)
-
-def draw_simple_paragraph(pdf: PDF, text: str):
-    """
-    Escreve um parágrafo simples, respeitando a largura.
-    """
-    pdf.set_font("Arial", "", 10)
-    lines = text.split("\n")
-    for line in lines:
-        pdf.multi_cell(0, 5, sanitize_text(line), 0, 1)
-    pdf.ln(3)
-
-def draw_key_value_table(pdf: PDF, data: dict, col_widths=None):
-    """
-    Gera uma pequena tabela de chave e valor.
-    data deve ser um dicionário: {chave: valor, ...}.
-    """
     if not data:
-        return
+        return "<p>Sem informações adicionais.</p>"
 
-    if col_widths is None:
-        # Calcular automaticamente
-        page_width = pdf.w - 2 * pdf.l_margin
-        col_widths = [page_width * 0.3, page_width * 0.7]
+    if isinstance(data, dict):
+        html_list = "<ul>"
+        for k, v in data.items():
+            label = LABEL_MAP.get(k, k)
+            if v is None or v == "":
+                v = "Não informado"
+            val_escaped = html.escape(str(v))
+            html_list += f"<li><strong>{html.escape(str(label))}</strong>: {val_escaped}</li>"
+        html_list += "</ul>"
+        return html_list
+    elif isinstance(data, list):
+        if not data:
+            return "<p>Sem informações adicionais.</p>"
+        html_list = "<ul>"
+        for item in data:
+            item_escaped = html.escape(str(item))
+            html_list += f"<li>{item_escaped}</li>"
+        html_list += "</ul>"
+        return html_list
 
-    pdf.set_font("Arial", "B", 10)
-    pdf.set_fill_color(220, 220, 220)  # fundo cinza p/ cabeçalho
-    # Cabeçalho
-    pdf.cell(col_widths[0], 6, sanitize_text("Campo"), 1, 0, "C", fill=True)
-    pdf.cell(col_widths[1], 6, sanitize_text("Valor"), 1, 1, "C", fill=True)
+    return html.escape(str(data))
 
-    # Conteúdo
-    pdf.set_font("Arial", "", 10)
-    pdf.set_fill_color(255, 255, 255)
-    for k, v in data.items():
-        k_sanit = sanitize_text(k)
-        v_sanit = sanitize_text(v)
-        pdf.cell(col_widths[0], 6, k_sanit, 1, 0, "L", fill=False)
-        pdf.cell(col_widths[1], 6, v_sanit, 1, 1, "L", fill=False)
-    pdf.ln(5)
 
-def draw_table(pdf: PDF, table_data: list, headers: list):
-    """
-    Desenha uma tabela com cabeçalho.
-    table_data é uma lista de dicionários ou de listas,
-    headers é a lista dos nomes das colunas.
-    """
-    if not table_data or not headers:
-        return
+###############################################################################
+#       4. SELEÇÃO DE INICIATIVA E EXIBIÇÃO NA INTERFACE (HTML)              #
+###############################################################################
+perfil_usuario = st.session_state.get("perfil", "")
+setor_usuario  = st.session_state.get("setor", "")
 
-    pdf.set_font("Arial", "B", 10)
-    pdf.set_fill_color(220, 220, 220)
-    page_width = pdf.w - 2 * pdf.l_margin
+df_iniciativas = load_iniciativas(setor_usuario, perfil_usuario)
+if df_iniciativas.empty:
+    st.info("ℹ️ Nenhuma iniciativa encontrada para o seu setor.")
+    st.stop()
 
-    col_width = page_width / len(headers)
-    # Cabeçalho
-    for h in headers:
-        pdf.cell(col_width, 6, sanitize_text(h), 1, 0, "C", fill=True)
-    pdf.ln(6)
+nomes_iniciativas = df_iniciativas['nome_iniciativa'].unique().tolist()
+iniciativa_selecionada = st.selectbox("Selecione a iniciativa", nomes_iniciativas)
+df_filtrado = df_iniciativas[df_iniciativas['nome_iniciativa'] == iniciativa_selecionada]
 
-    # Linhas
-    pdf.set_font("Arial", "", 10)
-    pdf.set_fill_color(255, 255, 255)
-
-    for row in table_data:
-        # Se for dicionário, extrair na ordem exata de headers
-        # Se for lista/tupla, usar por índice
-        if isinstance(row, dict):
-            for h in headers:
-                cell_text = sanitize_text(str(row.get(h, "")))
-                pdf.cell(col_width, 6, cell_text, 1, 0, "C", fill=False)
-        elif isinstance(row, (list, tuple)):
-            for val in row:
-                cell_text = sanitize_text(str(val))
-                pdf.cell(col_width, 6, cell_text, 1, 0, "C", fill=False)
-        pdf.ln(6)
-    pdf.ln(3)
-
-########################################
-# Nova Função de Criação do PDF        #
-########################################
-
-def create_pdf(df: pd.DataFrame) -> str:
-    """
-    Cria um PDF contendo todas as iniciativas do DataFrame.
-    Retorna o caminho do arquivo gerado para garantir o download correto.
-    """
-    pdf = PDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    
-    for _, row in df.iterrows():
-        pdf.add_page()
-
-        # Cabeçalho da iniciativa
-        pdf.set_font("Arial", "B", 14)
-        iniciativa_title = "Iniciativa: " + str(row['nome_iniciativa'])
-        pdf.cell(0, 10, sanitize_text(iniciativa_title), 0, 1, "L")
-        pdf.ln(5)
-
-        # Seção: Objetivo Geral
-        draw_section_title(pdf, "Objetivo Geral")
-        draw_wrapped_paragraph(pdf, remove_html_for_pdf(str(row['objetivo_geral'])))
-
-        # Seção: Objetivos Específicos
-        draw_section_title(pdf, "Objetivos Específicos")
-        draw_wrapped_paragraph(pdf, remove_html_for_pdf(format_objetivos_especificos(row['objetivos_especificos'])))
-
-        # Seção: Introdução
-        draw_section_title(pdf, "Introdução")
-        draw_wrapped_paragraph(pdf, remove_html_for_pdf(row['introducao']))
-
-        # Seção: Justificativa
-        draw_section_title(pdf, "Justificativa")
-        draw_wrapped_paragraph(pdf, remove_html_for_pdf(row['justificativa']))
-
-        # Seção: Metodologia
-        draw_section_title(pdf, "Metodologia")
-        draw_wrapped_paragraph(pdf, remove_html_for_pdf(row['metodologia']))
-
-        # Seção: Eixos Temáticos
-        draw_section_title(pdf, "Eixos Temáticos")
-        draw_wrapped_paragraph(pdf, remove_html_for_pdf(format_eixos_tematicos_table(row.get('eixos_tematicos', ''))))
-
-        # Seção: Insumos
-        draw_section_title(pdf, "Insumos")
-        draw_wrapped_paragraph(pdf, remove_html_for_pdf(format_insumos(row.get('insumos', ''))))
-
-        # Seção: Distribuição por Unidade
-        draw_section_title(pdf, "Distribuição por Unidade")
-        distr_str = row.get('distribuicao_ucs', '')
-        try:
-            distr_data = json.loads(distr_str) if distr_str else []
-        except:
-            distr_data = []
-        if distr_data:
-            headers = ["Unidade", "Acao", "Valor Alocado"]
-            draw_table(pdf, distr_data, headers)
-        else:
-            draw_wrapped_paragraph(pdf, "Nenhuma informação sobre distribuição de unidades.")
-
-        # Seção: Formas de Contratação
-        draw_section_title(pdf, "Formas de Contratação")
-        formas_str = row.get('formas_contratacao', '')
-        try:
-            formas_json = json.loads(formas_str) if formas_str else {}
-        except:
-            formas_json = {}
-
-        tabela_formas = formas_json.get("tabela_formas", [])
-        detalhes_formas = formas_json.get("detalhes", {})
-
-        if tabela_formas:
-            data_table = [[item.get("Forma de Contratação", "Sem descrição"), "Selecionado" if item.get("Selecionado", False) else "Não Selecionado"] for item in tabela_formas]
-            headers_formas = ["Forma de Contratação", "Status"]
-            draw_table(pdf, data_table, headers_formas)
-        else:
-            draw_wrapped_paragraph(pdf, "Não há formas de contratação listadas.")
-
-        if detalhes_formas:
-            draw_section_title(pdf, "Detalhes das Formas de Contratação")
-            detalhes_dic = {k: ", ".join(map(str, v)) if isinstance(v, list) else str(v) for k, v in detalhes_formas.items()}
-            draw_key_value_table(pdf, detalhes_dic)
-
-        # Seção: Demais Informações
-        draw_section_title(pdf, "Demais Informações")
-        draw_wrapped_paragraph(pdf, remove_html_for_pdf(process_generic_json(row.get('demais_informacoes', ''))))
-
-        # Responsável e Data/Hora
-        pdf.set_font("Arial", "I", 10)
-        usuario_resp = "Responsável: " + str(row['usuario'])
-        data_reg = datetime.strptime(row['data_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')
-        pdf.cell(0, 8, sanitize_text(f"{usuario_resp} | Data/Hora: {data_reg}"), 0, 1, "L")
-
-        # Linha divisória
-        pdf.ln(3)
-        pdf.set_draw_color(0, 0, 0)
-        pdf.set_line_width(0.3)
-        pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
-        pdf.ln(5)
-
-    # Salva PDF temporariamente
-    pdf_path = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name
-    pdf.output(pdf_path, "F")
-
-    return pdf_path
-
-########################################
-# CSS para Layout na Interface         #
-########################################
-
+# CSS para layout original no Streamlit
 card_css = """
 <style>
 .card-container {
@@ -800,92 +507,9 @@ th {
 """
 st.markdown(card_css, unsafe_allow_html=True)
 
-########################################
-# Funções Auxiliares para a Interface  #
-########################################
-def safe_html(value: str) -> str:
-    """
-    Converte None em string vazia e substitui quebras de linha por <br>.
-    """
-    if value is None:
-        value = ""
-    return html.escape(str(value)).replace("\n", "<br>")
-
-LABEL_MAP = {
-    "diretoria": "Diretoria Responsável",
-    "coordenacao_geral": "Coordenação Geral",
-    "coordenacao": "Coordenação",
-    "demandante" : "Setor Demandante"
-}
-
-def format_demais_informacoes(json_str: str) -> str:
-    """
-    Converte o JSON (ou dicionário) de 'demais_informacoes' em bullets.
-    """
-    try:
-        data = json.loads(json_str)
-    except:
-        # Se não for JSON válido, retorna o texto como está (escapado)
-        return html.escape(json_str)
-
-    if not data:
-        return "<p>Sem informações adicionais.</p>"
-
-    # Se for dicionário
-    if isinstance(data, dict):
-        # Monta uma lista <ul> com cada chave: valor como <li>.
-        html_list = "<ul>"
-        for k, v in data.items():
-            label = LABEL_MAP.get(k, k)  # se não achar, usa a própria chave 
-            if v is None or v == "":
-                v = "Não informado"
-            # Escapamos as chaves e valores
-            key_escaped = html.escape(str(k))
-            val_escaped = html.escape(str(v))
-            # html_list += f"<li><strong>{key_escaped}</strong>: {val_escaped}</li>"
-            html_list += f"<li><strong>{html.escape(str(label))}</strong>: {val_escaped}</li>"
-        html_list += "</ul>"
-        return html_list
-
-    # Se for lista
-    elif isinstance(data, list):
-        if not data:  # lista vazia
-            return "<p>Sem informações adicionais.</p>"
-        html_list = "<ul>"
-        for item in data:
-            item_escaped = html.escape(str(item))
-            html_list += f"<li>{item_escaped}</li>"
-        html_list += "</ul>"
-        return html_list
-    
-    # Se for outro tipo de dado, retornar como texto puro escapado
-    return html.escape(str(data))
-
-
-
-########################################
-# Seleção de Iniciativa e Exibição     #
-########################################
-
-# O setor é obtido da sessão do usuário
-perfil_usuario = st.session_state.get("perfil", "")  # 'admin', 'cocam' ou outro
-setor_usuario  = st.session_state.get("setor", "")
-
-# Carrega as iniciativas do setor do usuário
-df_iniciativas = load_iniciativas(setor_usuario, perfil_usuario)
-if df_iniciativas.empty:
-    st.info("ℹ️ Nenhuma iniciativa encontrada para o seu setor.")
-    st.stop()
-
-# O usuário seleciona a iniciativa desejada
-nomes_iniciativas = df_iniciativas['nome_iniciativa'].unique().tolist()
-iniciativa_selecionada = st.selectbox("Selecione a iniciativa", nomes_iniciativas)
-df_filtrado = df_iniciativas[df_iniciativas['nome_iniciativa'] == iniciativa_selecionada]
-
-# Exibe os detalhes da iniciativa na interface (em cards)
+# Exibe os cards HTML na interface
 st.markdown("<div class='card-container'>", unsafe_allow_html=True)
-for idx, row in df_filtrado.iterrows():
-    # Campos de texto puro (devem ser escapados para evitar problemas HTML)
+for _, row in df_filtrado.iterrows():
     nome_iniciativa  = safe_html(row.get('nome_iniciativa', ''))
     objetivo_geral   = safe_html(row.get('objetivo_geral', ''))
     introducao       = safe_html(row.get('introducao', ''))
@@ -893,7 +517,6 @@ for idx, row in df_filtrado.iterrows():
     metodologia      = safe_html(row.get('metodologia', ''))
     responsavel      = safe_html(row.get('usuario', ''))
 
-    # Campos que já retornam HTML formatado (NÃO devemos aplicar safe_html)
     objetivos_especificos = format_objetivos_especificos(row.get('objetivos_especificos', '') or '')
     eixos_tematicos       = format_eixos_tematicos_table(row.get('eixos_tematicos', '') or '')
     insumos               = format_insumos(row.get('insumos', '') or '')
@@ -902,14 +525,12 @@ for idx, row in df_filtrado.iterrows():
     formas_contratacao    = format_formas_contratacao(row.get('formas_contratacao', '') or '')
     demais_informacoes    = format_demais_informacoes(row.get('demais_informacoes', '') or '')
 
-    # Formata data/hora
     data_hora_str = row.get('data_hora')
     if data_hora_str:
         data_hora_fmt = datetime.strptime(data_hora_str, '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')
     else:
         data_hora_fmt = "(sem data)"
 
-    # Monta o HTML do card
     card_html = f"""
     <div class="card">
         <div class="card-section">
@@ -965,26 +586,190 @@ for idx, row in df_filtrado.iterrows():
         </div>
     </div>
     """
-
-    # Renderiza o card com HTML interpretado
     st.markdown(card_html, unsafe_allow_html=True)
-
 st.markdown("</div>", unsafe_allow_html=True)
 
 
+###############################################################################
+#  5. ABORDAGEM XHTML2PDF COM HTML SIMPLIFICADO (PRETO E BRANCO, SEÇÕES)      #
+###############################################################################
+def generate_html_for_iniciativas(df: pd.DataFrame) -> str:
+    """
+    Gera um HTML mais simples (preto e branco), sem cards,
+    organizado em seções com bullet points e tabelas.
+    """
+    # CSS minimalista
+    minimal_css = """
+    <style>
+    body {
+        font-family: Arial, sans-serif;
+        color: #000;
+        font-size: 12px;
+        margin: 20px;
+    }
+    h2, h3, h4 {
+        color: #000;
+        margin-bottom: 8px;
+        margin-top: 20px;
+    }
+    table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-bottom: 15px;
+    }
+    table, th, td {
+        border: 1px solid #000;
+        padding: 5px;
+        vertical-align: top;
+    }
+    th {
+        background-color: #eee;
+    }
+    ul {
+        margin-bottom: 15px;
+        padding-left: 20px;
+    }
+    .section-title {
+        font-weight: bold;
+        margin: 10px 0 5px 0;
+    }
+    .subtitle {
+        font-weight: bold;
+        margin: 5px 0;
+    }
+    hr {
+        margin: 20px 0;
+    }
+    </style>
+    """
+
+    html_out = f"""
+    <html>
+    <head>
+        <meta charset="utf-8"/>
+        {minimal_css}
+    </head>
+    <body>
+    <h2>Relatório de Iniciativas e Regras de Negócio</h2>
+    """
+
+    for _, row in df.iterrows():
+        nome_iniciativa  = safe_html(row.get('nome_iniciativa', ''))
+        objetivo_geral   = safe_html(row.get('objetivo_geral', ''))
+        introducao       = safe_html(row.get('introducao', ''))
+        justificativa    = safe_html(row.get('justificativa', ''))
+        metodologia      = safe_html(row.get('metodologia', ''))
+        responsavel      = safe_html(row.get('usuario', ''))
+
+        objetivos_especificos = format_objetivos_especificos(row.get('objetivos_especificos', '') or '')
+        eixos_tematicos       = format_eixos_tematicos_table(row.get('eixos_tematicos', '') or '')
+        insumos               = format_insumos(row.get('insumos', '') or '')
+        distrib_ucs           = format_distribuicao_ucs(row.get('distribuicao_ucs', '') or '')
+        distrib_ucs_eixo      = format_distribuicao_por_eixo(row.get('distribuicao_ucs', '') or '')
+        formas_contratacao    = format_formas_contratacao(row.get('formas_contratacao', '') or '')
+        demais_informacoes    = format_demais_informacoes(row.get('demais_informacoes', '') or '')
+
+        data_hora_str = row.get('data_hora')
+        if data_hora_str:
+            data_hora_fmt = datetime.strptime(data_hora_str, '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')
+        else:
+            data_hora_fmt = "(sem data)"
+
+        html_out += f"""
+        <hr/>
+        <h3>Iniciativa: {nome_iniciativa}</h3>
+
+        <div class="section-title">Objetivo Geral</div>
+        <p>{objetivo_geral}</p>
+
+        <div class="section-title">Objetivos Específicos</div>
+        {objetivos_especificos}
+
+        <div class="section-title">Introdução</div>
+        <p>{introducao}</p>
+
+        <div class="section-title">Justificativa</div>
+        <p>{justificativa}</p>
+
+        <div class="section-title">Metodologia</div>
+        <p>{metodologia}</p>
+
+        <div class="section-title">Eixos Temáticos</div>
+        {eixos_tematicos}
+
+        <div class="section-title">Insumos</div>
+        <p>{insumos}</p>
+
+        <div class="section-title">Distribuição por Unidade</div>
+        {distrib_ucs}
+
+        <div class="section-title">Distribuição por Unidade / Eixo</div>
+        {distrib_ucs_eixo}
+
+        <div class="section-title">Formas de Contratação</div>
+        {formas_contratacao}
+
+        <div class="section-title">Demais Informações</div>
+        {demais_informacoes}
+
+        <p><strong>Responsável:</strong> {responsavel} |
+           <strong>Data/Hora:</strong> {data_hora_fmt}</p>
+        """
+
+    html_out += """
+    </body>
+    </html>
+    """
+    return html_out
 
 
+def create_pdf_from_html(html_string: str) -> str:
+    """Converte HTML em PDF (xhtml2pdf), salvando em arquivo temporário."""
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    pdf_path = temp_file.name
+    temp_file.close()
 
-########################################
-# Geração do PDF                       #
-########################################
+    pisa_status = pisa.CreatePDF(
+        src=html_string,
+        dest=open(pdf_path, "wb"),
+        encoding='utf-8'
+    )
+    if pisa_status.err:
+        raise ValueError("Erro ao gerar PDF com xhtml2pdf")
 
-if st.button("📄 Gerar Extrato Completo em PDF", type='secondary'):
+    return pdf_path
+
+
+def create_pdf_bytes(html_string: str) -> bytes:
+    """Converte HTML em PDF (xhtml2pdf), retornando bytes (in memory)."""
+    pdf_buffer = BytesIO()
+    pisa_status = pisa.CreatePDF(
+        src=html_string,
+        dest=pdf_buffer,
+        encoding='utf-8'
+    )
+    if pisa_status.err:
+        st.error("Erro ao gerar PDF com xhtml2pdf")
+        st.write(pisa_status.log)
+        raise ValueError("Erro ao gerar PDF com xhtml2pdf")
+
+    pdf_data = pdf_buffer.getvalue()
+    pdf_buffer.close()
+    return pdf_data
+
+###############################################################################
+#  7. BOTÃO: GERA E EXIBE PDF (xhtml2pdf) NO STREAMLIT                        #
+###############################################################################
+if st.button("📄 Gerar Extrato Completo em PDF"):
     with st.spinner("Gerando Extrato em PDF..."):
-        pdf_path = create_pdf(df_filtrado)
+        # Usa a função com HTML simplificado P&B
+        html_content = generate_html_for_iniciativas(df_filtrado)
 
-        with open(pdf_path, "rb") as pdf_file:
-            pdf_bytes = pdf_file.read()
+        try:
+            pdf_bytes = create_pdf_bytes(html_content)
+        except ValueError as e:
+            st.error(f"Ocorreu um erro ao gerar o PDF: {e}")
+            st.stop()
 
         st.download_button(
             label="⬇️ Download do Extrato (PDF)",
@@ -993,4 +778,9 @@ if st.button("📄 Gerar Extrato Completo em PDF", type='secondary'):
             mime="application/pdf"
         )
 
-        pdf_viewer(pdf_path)
+        # Exibe também via streamlit_pdf_viewer
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(pdf_bytes)
+            temp_pdf_path = tmp.name
+
+        pdf_viewer(temp_pdf_path)
