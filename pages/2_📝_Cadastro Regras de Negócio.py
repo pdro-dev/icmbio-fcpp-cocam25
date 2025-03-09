@@ -1030,10 +1030,37 @@ with st.form("form_textos_resumo"):
     with tab_forma_contratacao:
         st.title("Formas de Contratação")
 
-        # 1) DataFrame inicial com as opções de contratação
-        #    Caso ainda não exista no session_state, cria agora.
-        if "df_formas_contratacao" not in st.session_state:
-            data = {
+        # ----------------------------------------------------------------
+        # 1) Carrega, se ainda não carregamos para esta iniciativa
+        #    (Assim, a cada troca de iniciativa, recarrega do banco)
+        # ----------------------------------------------------------------
+        if ("formas_carregou_iniciativa" not in st.session_state 
+            or st.session_state["formas_carregou_iniciativa"] != nova_iniciativa):
+            
+            st.session_state["formas_carregou_iniciativa"] = nova_iniciativa
+
+            # 1.1) Consulta a coluna 'formas_contratacao' no banco
+            conn = sqlite3.connect(DB_PATH)
+            row_formas = conn.execute("""
+                SELECT formas_contratacao
+                FROM tf_cadastro_regras_negocio
+                WHERE id_iniciativa = ?
+                ORDER BY data_hora DESC
+                LIMIT 1
+            """, (nova_iniciativa,)).fetchone()
+            conn.close()
+
+            # 1.2) Se existir JSON no banco, parseamos
+            if row_formas and row_formas[0]:
+                try:
+                    stored_formas = json.loads(row_formas[0])
+                except:
+                    stored_formas = {}
+            else:
+                stored_formas = {}
+
+            # 1.3) Monta DF default (4 formas) caso não tenha nada
+            df_default = pd.DataFrame({
                 "Forma de Contratação": [
                     "Contrato Caixa",
                     "Contrato ICMBio",
@@ -1041,12 +1068,52 @@ with st.form("form_textos_resumo"):
                     "Fundação de Amparo à pesquisa"
                 ],
                 "Selecionado": [False, False, False, False]
-            }
-            st.session_state["df_formas_contratacao"] = pd.DataFrame(data)
+            })
 
+            # 1.4) Se temos 'tabela_formas' no banco, converte em DF;
+            #      caso contrário, use df_default
+            tabela_formas_banco = stored_formas.get("tabela_formas", [])
+            if tabela_formas_banco:
+                st.session_state["df_formas_contratacao"] = pd.DataFrame(tabela_formas_banco)
+            else:
+                st.session_state["df_formas_contratacao"] = df_default.copy()
 
+            # 1.5) Carrega “detalhes_por_forma” do banco e joga no session_state
+            detalhes = stored_formas.get("detalhes_por_forma", {})
+            # Exemplo: "Contrato Caixa" => {"Observações": "..."}
+            if "Contrato Caixa" in detalhes:
+                st.session_state["observacoes_caixa"] = detalhes["Contrato Caixa"].get("Observações", "")
+
+            if "Contrato ICMBio" in detalhes:
+                icmbio_data = detalhes["Contrato ICMBio"]
+                st.session_state["contrato_icmbio_escolhido"] = icmbio_data.get("Contratos Escolhidos", [])
+                st.session_state["coord_geral_gestora"]       = icmbio_data.get("Coordenação Geral Gestora", "Não")
+                st.session_state["justificativa_icmbio"]       = icmbio_data.get("Justificativa Uso ICMBio", "")
+
+            if "Fundação de Apoio credenciada pelo ICMBio" in detalhes:
+                fa_data = detalhes["Fundação de Apoio credenciada pelo ICMBio"]
+                st.session_state["existe_projeto_cppar"] = fa_data.get("Já existe projeto CPPar?", "Não")
+                st.session_state["sei_projeto"]          = fa_data.get("SEI do Projeto", "")
+                st.session_state["sei_ata"]              = fa_data.get("SEI da Ata/Decisão CPPar", "")
+                st.session_state["in_concorda"]          = fa_data.get("Concorda com IN 18/2018 e 12/2024?", "Não")
+                st.session_state["justificativa_fundacao"] = fa_data.get("Justificativa Fundação de Apoio", "")
+
+            if "Fundação de Amparo à pesquisa" in detalhes:
+                amparo_data = detalhes["Fundação de Amparo à pesquisa"]
+                st.session_state["in_amparo"] = amparo_data.get("IN de Amparo?", "Não")
+                # Fundações Selecionadas é string, ex.: "FAPESP, FAPEMIG"
+                f_str = amparo_data.get("Fundações Selecionadas", "")
+                if f_str:
+                    st.session_state["f_aparceria"] = [x.strip() for x in f_str.split(",") if x.strip()]
+                else:
+                    st.session_state["f_aparceria"] = []
+                st.session_state["parcerias_info"] = amparo_data.get("Informações de Parceria", "")
+
+        # ----------------------------------------------------------------
+        # 2) Agora exibir a UI, com os DF e expansions
+        # ----------------------------------------------------------------
         with st.form("form_formas_contratacao"):
-            # 2) Exibir no data_editor, permitindo ao usuário marcar/desmarcar cada forma
+            # (a) Data Editor do DF
             df_editor = st.data_editor(
                 st.session_state["df_formas_contratacao"],
                 column_config={
@@ -1056,11 +1123,8 @@ with st.form("form_textos_resumo"):
                 hide_index=True,
                 key="formas_editor"
             )
-
-            # 3) Atualizar o DF no session_state com possíveis alterações de checkbox
             st.session_state["df_formas_contratacao"] = df_editor.copy()
 
-            # 4) Identificar quais formas foram selecionadas
             selected_forms = df_editor.loc[df_editor["Selecionado"], "Forma de Contratação"].tolist()
 
             if st.form_submit_button("Salvar Formas Selecionadas"):
@@ -1068,119 +1132,76 @@ with st.form("form_textos_resumo"):
 
         st.divider()
 
-        # -------------------------------------------------------------------------
-        # 4.1) Se "Contrato Caixa" estiver selecionado
-        # -------------------------------------------------------------------------
+        # (b) Exibe os expanders conforme selected_forms
         if "Contrato Caixa" in selected_forms:
             with st.expander("📌 Contrato Caixa", expanded=False):
-                # Exemplo de campo de texto adicional:
                 st.session_state["observacoes_caixa"] = st.text_area(
                     "Observações",
                     value=st.session_state.get("observacoes_caixa", ""),
                     help="Inclua aqui quaisquer observações relativas ao contrato CAIXA."
                 )
 
-
-        # -------------------------------------------------------------------------
-        # 4.2) Se "Contrato ICMBio" estiver selecionado
-        # -------------------------------------------------------------------------
         if "Contrato ICMBio" in selected_forms:
             with st.expander("📌 Contrato ICMBio", expanded=False):
-
-                # 🔹 Lista suspensa de múltiplas escolhas (Multiselect)
                 contratos_disponiveis = ["Contrato ICMBio 1", "Contrato ICMBio 2", "Contrato ICMBio 3"]
-                
-                # Convertendo o estado anterior (se houver) em uma lista
-                selecao_anterior = st.session_state.get("contrato_icmbio_escolhido", [])
-                if not isinstance(selecao_anterior, list):
-                    selecao_anterior = [selecao_anterior] if selecao_anterior else []
-
+                sel_anterior = st.session_state.get("contrato_icmbio_escolhido", [])
                 st.session_state["contrato_icmbio_escolhido"] = st.multiselect(
-                    "Quais contratos do ICMBio possuem os insumos e serviços previstos?",
+                    "Quais contratos do ICMBio ...",
                     options=contratos_disponiveis,
-                    default=selecao_anterior,
-                    help="Selecione um ou mais contratos."
+                    default=sel_anterior
                 )
-
-                # Radio para saber se a coordenação é gestora
                 st.session_state["coord_geral_gestora"] = st.radio(
-                    "A coordenação geral é gestora de algum desses contratos?",
+                    "A coordenação geral é gestora ...?",
                     options=["Sim", "Não"],
-                    index=["Sim", "Não"].index(
-                        st.session_state.get("coord_geral_gestora", "Não")
-                    ) if "coord_geral_gestora" in st.session_state else 0
+                    index=["Sim", "Não"].index(st.session_state.get("coord_geral_gestora", "Não"))
                 )
-
-                # Justificativa para uso do ICMBio em detrimento da Caixa
                 st.session_state["justificativa_icmbio"] = st.text_area(
-                    "Qual a justificativa para utilização desses contratos em detrimento dos contratos realizados pela CAIXA?",
+                    "Justificativa ...",
                     value=st.session_state.get("justificativa_icmbio", "")
                 )
 
-
-        # -------------------------------------------------------------------------
-        # 4.3) Se "Fundação de Apoio credenciada pelo ICMBio" estiver selecionado
-        # -------------------------------------------------------------------------
         if "Fundação de Apoio credenciada pelo ICMBio" in selected_forms:
             with st.expander("📌 Fundação de Apoio credenciada pelo ICMBio", expanded=False):
-
                 st.session_state["existe_projeto_cppar"] = st.radio(
-                    "Já existe projeto aprovado pela CPPar relacionado ao tema proposto?",
+                    "Já existe projeto aprovado pela CPPar ...?",
                     options=["Sim", "Não"],
-                    index=["Sim", "Não"].index(
-                        st.session_state.get("existe_projeto_cppar", "Não")
-                    ) if "existe_projeto_cppar" in st.session_state else 0
+                    index=["Sim", "Não"].index(st.session_state.get("existe_projeto_cppar", "Não"))
                 )
-
                 if st.session_state["existe_projeto_cppar"] == "Sim":
                     st.session_state["sei_projeto"] = st.text_input(
-                        "Informe o número SEI correspondente ao projeto",
+                        "Informe o número SEI ...",
                         value=st.session_state.get("sei_projeto", "")
                     )
                     st.session_state["sei_ata"] = st.text_input(
-                        "Número SEI da Ata/Decisão de aprovação do projeto na CPPar",
+                        "Número SEI da Ata ...",
                         value=st.session_state.get("sei_ata", "")
                     )
-
                 st.session_state["in_concorda"] = st.radio(
-                    "A iniciativa estruturante está de acordo com as IN nº 18/2018 e nº 12/2024?",
+                    "A iniciativa está de acordo com IN 18/2018 ...?",
                     options=["Sim", "Não"],
-                    index=["Sim", "Não"].index(
-                        st.session_state.get("in_concorda", "Não")
-                    ) if "in_concorda" in st.session_state else 0
+                    index=["Sim", "Não"].index(st.session_state.get("in_concorda", "Não"))
                 )
-
                 st.session_state["justificativa_fundacao"] = st.text_area(
-                    "Justificativa para uso de Fundação de Apoio:",
+                    "Justificativa para uso ...",
                     value=st.session_state.get("justificativa_fundacao", "")
                 )
 
-        # -------------------------------------------------------------------------
-        # 4.4) Se "Fundação de Amparo à pesquisa" estiver selecionado
-        # -------------------------------------------------------------------------
         if "Fundação de Amparo à pesquisa" in selected_forms:
             with st.expander("📌 Fundação de Amparo à Pesquisa", expanded=False):
-
                 st.session_state["in_amparo"] = st.radio(
-                    "A iniciativa estruturante está de acordo com as normas que amparam a fundação de amparo?",
+                    "A iniciativa ...?",
                     options=["Sim", "Não"],
-                    index=["Sim", "Não"].index(
-                        st.session_state.get("in_amparo", "Não")
-                    ) if "in_amparo" in st.session_state else 0
+                    index=["Sim", "Não"].index(st.session_state.get("in_amparo", "Não"))
                 )
-
                 fundacoes_disponiveis = ["FAPESP", "FAPERJ", "FAPEMIG", "Outra..."]
-                # Convertemos a seleção anterior (se houver) em lista p/ multiselect
-                selecao_anterior = st.session_state.get("f_aparceria", [])
+                selecao_ant = st.session_state.get("f_aparceria", [])
                 st.session_state["f_aparceria"] = st.multiselect(
-                    "Quais Fundações de Amparo se pretende realizar a parceria?",
+                    "Quais Fundações de Amparo ...",
                     options=fundacoes_disponiveis,
-                    default=selecao_anterior,
-                    help="Selecione uma ou mais fundações, caso existam."
+                    default=selecao_ant
                 )
-
                 st.session_state["parcerias_info"] = st.text_area(
-                    "Há parcerias em andamento ou contato prévio com a fundação? Descreva.",
+                    "Há parcerias ...?",
                     value=st.session_state.get("parcerias_info", "")
                 )
 
@@ -1192,43 +1213,66 @@ with st.form("form_textos_resumo"):
         # 2) Verificar quais formas foram selecionadas
         selected_forms = [row["Forma de Contratação"] for row in formas_df_dict if row["Selecionado"]]
 
+
+        def not_informed_if_empty(value):
+            """
+            Se 'value' for uma string vazia ou só espaços, retorna "não informado".
+            Se for uma lista vazia, também retorna "não informado".
+            Caso contrário, retorna 'value' sem alterações.
+            """
+            if value is None:
+                return "não informado"
+
+            if isinstance(value, str):
+                if value.strip() == "":
+                    return "não informado"
+                return value
+
+            if isinstance(value, list):
+                if len(value) == 0:
+                    return "não informado"
+                return value
+
+            # Se for algum outro tipo (dict, bool, etc.), deixamos como está:
+            return value
+
+
         # 3) Se "Contrato Caixa" estiver em selected_forms, montar dict
         if "Contrato Caixa" in selected_forms:
             detalhes_por_forma["Contrato Caixa"] = {
-                "Observações": st.session_state.get("observacoes_caixa", "")
+                "Observações": not_informed_if_empty( st.session_state.get("observacoes_caixa", "") )
             }
 
-        # 4) Se "Contrato ICMBio" estiver em selected_forms, montar dict
         if "Contrato ICMBio" in selected_forms:
             detalhes_por_forma["Contrato ICMBio"] = {
-                "Contratos Escolhidos": st.session_state.get("contrato_icmbio_escolhido", ""),
-                "Coordenação Geral Gestora": st.session_state.get("coord_geral_gestora", ""),
-                "Justificativa Uso ICMBio": st.session_state.get("justificativa_icmbio", "")
+                "Contratos Escolhidos": not_informed_if_empty( st.session_state.get("contrato_icmbio_escolhido", []) ),
+                "Coordenação Geral Gestora": not_informed_if_empty( st.session_state.get("coord_geral_gestora", "") ),
+                "Justificativa Uso ICMBio": not_informed_if_empty( st.session_state.get("justificativa_icmbio", "") )
             }
 
-        # 5) Se "Fundação de Apoio credenciada pelo ICMBio" estiver selecionado
         if "Fundação de Apoio credenciada pelo ICMBio" in selected_forms:
-            existe_proj = st.session_state.get("existe_projeto_cppar", "")
+            existe_proj = not_informed_if_empty( st.session_state.get("existe_projeto_cppar", "") )
             fundacao_dict = {
                 "Já existe projeto CPPar?": existe_proj
             }
-            if existe_proj == "Sim":
-                fundacao_dict["SEI do Projeto"] = st.session_state.get("sei_projeto", "")
-                fundacao_dict["SEI da Ata/Decisão CPPar"] = st.session_state.get("sei_ata", "")
+            if existe_proj == "Sim":  # Se for "não informado" não entraria, mas a critério seu
+                fundacao_dict["SEI do Projeto"] = not_informed_if_empty( st.session_state.get("sei_projeto", "") )
+                fundacao_dict["SEI da Ata/Decisão CPPar"] = not_informed_if_empty( st.session_state.get("sei_ata", "") )
 
-            fundacao_dict["Concorda com IN 18/2018 e 12/2024?"] = st.session_state.get("in_concorda", "")
-            fundacao_dict["Justificativa Fundação de Apoio"] = st.session_state.get("justificativa_fundacao", "")
+            fundacao_dict["Concorda com IN 18/2018 e 12/2024?"] = not_informed_if_empty( st.session_state.get("in_concorda", "") )
+            fundacao_dict["Justificativa Fundação de Apoio"] = not_informed_if_empty( st.session_state.get("justificativa_fundacao", "") )
 
             detalhes_por_forma["Fundação de Apoio credenciada pelo ICMBio"] = fundacao_dict
 
-        # 6) Se "Fundação de Amparo à pesquisa" estiver selecionado
         if "Fundação de Amparo à pesquisa" in selected_forms:
             amparo_dict = {
-                "IN de Amparo?": st.session_state.get("in_amparo", ""),
-                "Fundações Selecionadas": ", ".join(st.session_state.get("f_aparceria", [])),
-                "Informações de Parceria": st.session_state.get("parcerias_info", "")
+                "IN de Amparo?": not_informed_if_empty( st.session_state.get("in_amparo", "") ),
+                # Se a lista de fundações estiver vazia, vira "não informado"
+                "Fundações Selecionadas": not_informed_if_empty( st.session_state.get("f_aparceria", []) ),
+                "Informações de Parceria": not_informed_if_empty( st.session_state.get("parcerias_info", "") )
             }
             detalhes_por_forma["Fundação de Amparo à pesquisa"] = amparo_dict
+
 
         # Agora unimos tudo em st.session_state
         formas_dict = {
