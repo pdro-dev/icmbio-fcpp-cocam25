@@ -1193,12 +1193,18 @@ with st.form("form_textos_resumo"):
                     options=["Sim", "Não"],
                     index=["Sim", "Não"].index(st.session_state.get("in_amparo", "Não"))
                 )
-                fundacoes_disponiveis = ["FAPESP", "FAPERJ", "FAPEMIG", "Outra..."]
-                selecao_ant = st.session_state.get("f_aparceria", [])
+                # 1) Se no session_state está "não informado", convertemos p/ lista vazia antes de passar ao multiselect
+                sel_anterior = st.session_state.get("f_aparceria", [])
+                if isinstance(sel_anterior, str) and sel_anterior.strip().lower() == "não informado":
+                    sel_anterior = []
+
+                # 2) Exibimos o multiselect, passando a lista de strings como default
+                fundacoes_disponiveis = ["FAPESP", "FAPERJ", "FAPEMIG", "Outra...", "não informado"]
                 st.session_state["f_aparceria"] = st.multiselect(
                     "Quais Fundações de Amparo ...",
                     options=fundacoes_disponiveis,
-                    default=selecao_ant
+                    default=sel_anterior,
+                    help="Selecione uma ou mais fundações, caso existam."
                 )
                 st.session_state["parcerias_info"] = st.text_area(
                     "Há parcerias ...?",
@@ -1215,25 +1221,17 @@ with st.form("form_textos_resumo"):
 
 
         def not_informed_if_empty(value):
-            """
-            Se 'value' for uma string vazia ou só espaços, retorna "não informado".
-            Se for uma lista vazia, também retorna "não informado".
-            Caso contrário, retorna 'value' sem alterações.
-            """
+            """Se for string/lista vazia, retorna 'não informado'; caso contrário, retorna o valor."""
             if value is None:
                 return "não informado"
-
             if isinstance(value, str):
-                if value.strip() == "":
+                if not value.strip():
                     return "não informado"
                 return value
-
             if isinstance(value, list):
                 if len(value) == 0:
                     return "não informado"
                 return value
-
-            # Se for algum outro tipo (dict, bool, etc.), deixamos como está:
             return value
 
 
@@ -1266,10 +1264,9 @@ with st.form("form_textos_resumo"):
 
         if "Fundação de Amparo à pesquisa" in selected_forms:
             amparo_dict = {
-                "IN de Amparo?": not_informed_if_empty( st.session_state.get("in_amparo", "") ),
-                # Se a lista de fundações estiver vazia, vira "não informado"
-                "Fundações Selecionadas": not_informed_if_empty( st.session_state.get("f_aparceria", []) ),
-                "Informações de Parceria": not_informed_if_empty( st.session_state.get("parcerias_info", "") )
+                "IN de Amparo?": not_informed_if_empty(st.session_state.get("in_amparo", "")),
+                "Fundações Selecionadas": not_informed_if_empty(st.session_state.get("f_aparceria", [])),
+                "Informações de Parceria": not_informed_if_empty(st.session_state.get("parcerias_info", "")),
             }
             detalhes_por_forma["Fundação de Amparo à pesquisa"] = amparo_dict
 
