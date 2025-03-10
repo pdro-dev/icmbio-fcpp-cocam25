@@ -312,13 +312,13 @@ def init_database():
             "Valor ATUALIZADO EM Dezembro/2024": "valor_referencia"
         })
 
-        # Ajusta valores numéricos
-        df_insumos["valor_referencia"] = (
-            df_insumos["valor_referencia"]
-            .astype(str)
-            .str.replace(".", "")   # remove milhar
-            .str.replace(",", ".")  # vírgula decimal -> ponto
-        )
+        # # Ajusta valores numéricos
+        # df_insumos["valor_referencia"] = (
+        #     df_insumos["valor_referencia"]
+        #     .astype(str)
+        #     .str.replace(".", "")   # remove milhar
+        #     .str.replace(",", ".")  # vírgula decimal -> ponto
+        # )
         df_insumos["valor_referencia"] = pd.to_numeric(df_insumos["valor_referencia"], errors="coerce").fillna(0.0)
 
         # Seleciona colunas na ordem
