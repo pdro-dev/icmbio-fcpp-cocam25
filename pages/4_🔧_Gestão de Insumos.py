@@ -10,9 +10,6 @@ if "usuario_logado" not in st.session_state or not st.session_state["usuario_log
     st.warning("🔒 Acesso negado! Faça login.")
     st.stop()
 
-# Exemplo: supondo que guardamos no session_state:
-#   st.session_state["cpf"] = "000.000.000-00"
-#   st.session_state["perfil"] = "cocam" ou "padrao"
 usuario_cpf   = st.session_state.get("cpf", "000.000.000-00")
 usuario_perfil = st.session_state.get("perfil", "padrao")
 
@@ -40,7 +37,7 @@ def get_distinct_espec_padrao(elemento=None):
         cursor.execute("""
             SELECT DISTINCT especificacao_padrao 
               FROM td_insumos 
-             WHERE elemento_despesa = ? 
+             WHERE elemento_despesa = ?
           ORDER BY especificacao_padrao
         """, (elemento,))
     else:
@@ -63,33 +60,7 @@ def get_distinct_insumos(elemento=None, espec=None):
     rows = cursor.fetchall()
     return [row[0] for row in rows if row[0]]
 
-def get_preco(elemento, espec, insumo):
-    """
-    Retorna o primeiro preço encontrado (se houver) 
-    para o trio (elemento, espec_padrao, insumo) com situacao = 'ativo'.
-    """
-    query = """
-        SELECT preco_referencia
-          FROM td_insumos
-         WHERE elemento_despesa = ?
-           AND especificacao_padrao = ?
-           AND descricao_insumo = ?
-           AND situacao = 'ativo'
-         ORDER BY id DESC
-         LIMIT 1
-    """
-    cursor.execute(query, (elemento, espec, insumo))
-    row = cursor.fetchone()
-    if row:
-        return row[0]
-    return None
-
 def check_existing_insumo(elemento, espec, insumo):
-    """
-    Verifica se já existe algum registro (em qualquer situacao)
-    com a mesma combinação de (elemento, espec_padrao, insumo).
-    Fazemos comparação case-insensitive com LOWER(...).
-    """
     query = """
         SELECT COUNT(*) 
           FROM td_insumos
@@ -102,7 +73,7 @@ def check_existing_insumo(elemento, espec, insumo):
         (elemento.lower(), espec.lower(), insumo.lower())
     )
     (count,) = cursor.fetchone()
-    return count > 0  # Se count > 0, já existe
+    return count > 0
 
 def insert_insumo(elemento, espec_padrao, nome_insumo, preco, origem, situacao, registrado_por):
     cursor.execute("""
@@ -166,6 +137,16 @@ def get_insumos_desativados():
     query = "SELECT * FROM td_insumos WHERE situacao = 'desativado' ORDER BY id DESC"
     return pd.read_sql_query(query, conn)
 
+def filtrar_df(df, elemento, espec, insumo):
+    """Aplica filtros no DF, se não forem vazios."""
+    if elemento:
+        df = df[df["elemento_despesa"] == elemento]
+    if espec:
+        df = df[df["especificacao_padrao"] == espec]
+    if insumo:
+        df = df[df["descricao_insumo"] == insumo]
+    return df
+
 
 # ------------------------------------------------------------------------
 #                 Interface - Cabeçalho
@@ -173,20 +154,14 @@ def get_insumos_desativados():
 st.subheader("Gestão de Insumos 🔧")
 st.markdown("---")
 
-# =============================================================================
-# 1) DOIS FORMULÁRIOS LADO A LADO
-#    - Formulário da ESQUERDA: inputs de texto (INSERIR NOVO INSUMO)
-#    - Formulário da DIREITA: selectboxes (CONSULTAR INSUMO EXISTENTE)
-# =============================================================================
 
-col1, col2, col3 = st.columns([10, 0.1, 10])	
+# ------------------------------------------------------------------------
+# 1) Formulário de Sugestão Lado Esquerdo
+# ------------------------------------------------------------------------
+col_form, col_empty, col_filtros = st.columns([10, 0.5, 2])
 
-# ---------------------------------------------------------------------
-# FORMULÁRIO 1 (ESQUERDA) - SUGERIR NOVO INSUMO (CAMPOS LIVRES)
-# ---------------------------------------------------------------------
-with col1:
-    st.markdown("#### Formulário de Sugestão (campos livres)")
-
+with col_form:
+    st.markdown("### Formulário de Sugestão")
     with st.form(key="form_sugestao_texto_livre"):
         elemento_text = st.text_input("Elemento de Despesa (texto livre)").strip()
         espec_text = st.text_input("Especificação Padrão (texto livre)").strip()
@@ -202,11 +177,9 @@ with col1:
             elif not desc_insumo_text:
                 st.error("O campo 'Descrição do Insumo' é obrigatório!")
             else:
-                # Antes de inserir, verifica se existe duplicado
                 if check_existing_insumo(elemento_text, espec_text, desc_insumo_text):
                     st.warning("Já existe um item com essa combinação de Elemento, Especificação e Descrição!")
                 else:
-                    # origem = st.session_state["setor"] (se existir) ou "desconhecido"
                     user_setor = st.session_state.get("setor", "desconhecido")
                     insert_insumo(
                         elemento=elemento_text,
@@ -220,98 +193,72 @@ with col1:
                     st.success("Sugestão adicionada com sucesso!")
                     st.rerun()
 
-with col2:
-    # Se precisar de algum espaçamento ou conteúdo mínimo
-    st.write("") # Pode ser um espaço em branco ou texto
 
-# ---------------------------------------------------------------------
-# FORMULÁRIO 2 (DIREITA) - CONSULTAR ITENS (SELECTBOX COM FILTROS)
-# ---------------------------------------------------------------------
-with col3:
-   
-    st.markdown("##### Consulta de Itens Existentes")
+# ------------------------------------------------------------------------
+# 2) Expander de Filtros (Selectboxes)
+# ------------------------------------------------------------------------
+with col_filtros:
+    with st.popover("Filtros de Consulta"):
+        # Monta as opções de cada filtro
+        todos_elementos = get_distinct_elementos()
+        selected_elemento = st.selectbox("Elemento de Despesa:", options=[""] + todos_elementos)
 
-    elemento_sel = st.selectbox(
-        "Elemento de Despesa",
-        options=[""] + get_distinct_elementos(),
-        help="Selecione para filtrar as próximas opções."
-    )
-
-    if elemento_sel:
-        especs = get_distinct_espec_padrao(elemento_sel)
-    else:
-        especs = []
-
-    espec_sel = st.selectbox(
-        "Especificação Padrão",
-        options=[""] + especs,
-        help="Filtra o campo seguinte."
-    )
-
-    if espec_sel:
-        insumos = get_distinct_insumos(elemento_sel, espec_sel)
-    else:
-        insumos = []
-
-    insumo_sel = st.selectbox(
-        "Descrição do Insumo",
-        options=[""] + insumos,
-        help="Selecione para ver o preço (se ativo)."
-    )
-
-    # Exibindo o preço do item selecionado (se existir e estiver ativo)
-    if elemento_sel and espec_sel and insumo_sel:
-        preco_encontrado = get_preco(elemento_sel, espec_sel, insumo_sel)
-        if preco_encontrado is not None:
-            st.info(f"Preço de Referência (Ativo): R$ {preco_encontrado:,.2f}")
+        if selected_elemento:
+            especs = get_distinct_espec_padrao(selected_elemento)
         else:
-            st.warning("Não há preço ativo cadastrado para esta combinação.")
-    else:
-        st.write("Selecione todos os campos para consultar preço.")
+            especs = get_distinct_espec_padrao()  # sem filtro
+
+        selected_espec = st.selectbox("Especificação Padrão:", options=[""] + especs)
+
+        if selected_espec:
+            insumos = get_distinct_insumos(selected_elemento, selected_espec)
+        else:
+            insumos = get_distinct_insumos(selected_elemento)  # filtra só por elemento, se houver
+        selected_insumo = st.selectbox("Descrição do Insumo:", options=[""] + insumos)
+
+        st.info("Esses filtros serão aplicados às tabelas abaixo.")
+
 
 st.markdown("---")
 
-
-# =============================================================================
-# 2) Tabela de Itens Sugeridos (situacao = 'em análise')
-# =============================================================================
-st.markdown("#### Itens Sugeridos (Em Análise)")
+# ============================================================================
+# 3) Tabela de Itens Sugeridos (Em Análise) - Aplica Filtro
+# ============================================================================
+st.markdown("### Itens Sugeridos (Em Análise)")
 
 df_sugestoes = get_sugestoes_insumos(usuario_perfil)
+df_sugestoes = filtrar_df(df_sugestoes, selected_elemento, selected_espec, selected_insumo)
 
 if df_sugestoes.empty:
-    st.info("Não há itens sugeridos em análise no momento.")
+    st.info("Não há itens sugeridos em análise no momento (ou não correspondem aos filtros).")
 else:
+    # Configurar colunas do data_editor
     if usuario_perfil in ["cocam", "admin"]:
         col_config_sug = {
             "situacao": st.column_config.SelectboxColumn(
                 "Situação",
                 width="small",
                 options=["em análise", "ativo", "desativado"]
-            ),
+            )
         }
     else:
         col_config_sug = {
-            "id": st.column_config.TextColumn("ID", disabled=True),
-            "elemento_despesa": st.column_config.TextColumn("Elemento de Despesa", disabled=False),
-            "especificacao_padrao": st.column_config.TextColumn("Especificação Padrão", disabled=False),
-            "descricao_insumo": st.column_config.TextColumn("Nome do Insumo", disabled=False),
-            "situacao": st.column_config.TextColumn("Situação", disabled=True),
-            "origem": st.column_config.TextColumn("Origem", disabled=True),
-            "registrado_por": st.column_config.TextColumn("Registrado Por", disabled=True),
+            "situacao": st.column_config.TextColumn("Situação", disabled=True)
         }
-
-    # Configuração de preço formatado
     col_config_sug["preco_referencia"] = st.column_config.NumberColumn(
         "Preço de Referência",
         format="localized",
         disabled=False
     )
 
+    # Outras colunas como você desejar (desabilitadas ou não)
+    # Exemplo simplificado:
+    # (Para mais detalhes de exibição, basta repetir as configs
+    #  como no seu código anterior)
     df_sugestoes = df_sugestoes[[
-        "id", "elemento_despesa", "especificacao_padrao",
+        "situacao", "elemento_despesa", "especificacao_padrao",
         "descricao_insumo", "preco_referencia", "origem",
-        "situacao", "registrado_por"
+        "registrado_por", "id"
     ]]
 
     edited_df_sug = st.data_editor(
@@ -338,35 +285,19 @@ else:
 
 st.markdown("---")
 
-
-# =============================================================================
-# 3) Tabela de Itens Ativos (Edição de 'Situação' apenas para cocam/admin)
-# =============================================================================
-st.markdown("#### Itens Ativos")
+# ============================================================================
+# 4) Tabela de Itens Ativos - Aplica Filtro
+# ============================================================================
+st.markdown("### Itens Ativos")
 
 df_ativos = get_insumos_ativos()
-df_ativos = df_ativos[[
-    "id", "elemento_despesa", "especificacao_padrao", "descricao_insumo",
-    "preco_referencia", "origem", "situacao", "registrado_por"
-]]
+df_ativos = filtrar_df(df_ativos, selected_elemento, selected_espec, selected_insumo)
 
 if df_ativos.empty:
-    st.info("Não há itens ativos no momento.")
+    st.info("Não há itens ativos no momento (ou não correspondem aos filtros).")
 else:
-    col_config_ativos = {
-        "id": st.column_config.TextColumn("ID", disabled=True),
-        "elemento_despesa": st.column_config.TextColumn("Elemento de Despesa", disabled=True),
-        "especificacao_padrao": st.column_config.TextColumn("Especificação Padrão", disabled=True),
-        "descricao_insumo": st.column_config.TextColumn("Nome do Insumo", disabled=True),
-        "preco_referencia": st.column_config.NumberColumn(
-            "Preço de Referência",
-            format="localized",
-            disabled=False
-        ),
-        "origem": st.column_config.TextColumn("Origem", disabled=True),
-        "registrado_por": st.column_config.TextColumn("Registrado Por", disabled=True),
-    }
-
+    col_config_ativos = {}
+    # Ajusta a coluna 'situacao' conforme o perfil:
     if usuario_perfil in ["cocam", "admin"]:
         col_config_ativos["situacao"] = st.column_config.SelectboxColumn(
             "Situação",
@@ -375,6 +306,18 @@ else:
         )
     else:
         col_config_ativos["situacao"] = st.column_config.TextColumn("Situação", disabled=True)
+
+    col_config_ativos["preco_referencia"] = st.column_config.NumberColumn(
+        "Preço",
+        format="localized",
+        disabled=False
+    )
+
+    df_ativos = df_ativos[[
+        "id", "elemento_despesa", "especificacao_padrao",
+        "descricao_insumo", "preco_referencia", "situacao", "origem",
+        "registrado_por" 
+    ]]
 
     edited_df_ativos = st.data_editor(
         df_ativos,
@@ -401,25 +344,20 @@ else:
 
 st.markdown("---")
 
-
-# =============================================================================
-# 4) Expander com Itens Desativados
-# =============================================================================
+# ============================================================================
+# 5) Expander com Itens Desativados - Aplica Filtro
+# ============================================================================
 with st.expander("Itens Desativados"):
     df_desativados = get_insumos_desativados()
-    if df_desativados.empty:
-        st.info("Não há itens desativados no momento.")
-    else:
-        # Adiciona a coluna "excluir" ao DataFrame apenas em memória
-        # para controlar a remoção
-        if usuario_perfil in ["cocam", "admin"]:
-            # Cria a coluna 'excluir' com valor False por padrão
-            df_desativados["excluir"] = False  
-        # Caso queira que outros perfis vejam a coluna, mas sem poder marcar,
-        # você poderia também criar df_desativados["excluir"] = False
-        # e exibir como disabled. Depende da sua regra de negócio.
+    df_desativados = filtrar_df(df_desativados, selected_elemento, selected_espec, selected_insumo)
 
-        # Mantemos as mesmas colunas de exibição + a nova "excluir" se for cocam/admin
+    if df_desativados.empty:
+        st.info("Não há itens desativados no momento (ou não correspondem aos filtros).")
+    else:
+        # Exemplo com a lógica de "excluir" igual antes
+        if usuario_perfil in ["cocam", "admin"]:
+            df_desativados["excluir"] = False
+
         cols_to_show = [
             "id", "elemento_despesa", "especificacao_padrao", "descricao_insumo",
             "preco_referencia", "origem", "situacao", "registrado_por"
@@ -429,47 +367,31 @@ with st.expander("Itens Desativados"):
 
         df_desativados = df_desativados[cols_to_show]
 
-        # Configuração das colunas
+        col_config_des = {}
         if usuario_perfil in ["cocam", "admin"]:
-            col_config_des = {
-                "situacao": st.column_config.SelectboxColumn(
-                    "Situação",
-                    width="small",
-                    options=["em análise", "ativo", "desativado"]
-                ),
-                "preco_referencia": st.column_config.NumberColumn(
-                    "Preço de Referência",
-                    format="localized",
-                    disabled=True
-                ),
-                # Nova coluna para exclusão
-                "excluir": st.column_config.CheckboxColumn(
-                    "Excluir?",
-                    help="Marque para excluir este registro.",
-                    disabled=False
-                )
-            }
+            col_config_des["situacao"] = st.column_config.SelectboxColumn(
+                "Situação",
+                width="small",
+                options=["em análise", "ativo", "desativado"]
+            )
+            col_config_des["preco_referencia"] = st.column_config.NumberColumn(
+                "Preço de Referência",
+                format="localized",
+                disabled=True
+            )
+            col_config_des["excluir"] = st.column_config.CheckboxColumn(
+                "Excluir?",
+                help="Marque para excluir este registro.",
+                disabled=False
+            )
         else:
-            # Perfil que não pode excluir nem alterar situação
-            col_config_des = {
-                "id": st.column_config.TextColumn("ID", disabled=True),
-                "elemento_despesa": st.column_config.TextColumn("Elemento de Despesa", disabled=True),
-                "especificacao_padrao": st.column_config.TextColumn("Especificação Padrão", disabled=True),
-                "descricao_insumo": st.column_config.TextColumn("Nome do Insumo", disabled=True),
-                "preco_referencia": st.column_config.NumberColumn(
-                    "Preço de Referência",
-                    format="localized",
-                    disabled=True
-                ),
-                "origem": st.column_config.TextColumn("Origem", disabled=True),
-                "situacao": st.column_config.TextColumn("Situação", disabled=True),
-                "registrado_por": st.column_config.TextColumn("Registrado Por", disabled=True),
-            }
-            # Se quiser que "excluir" apareça mesmo para não-admin, mas travada:
-            # col_config_des["excluir"] = st.column_config.CheckboxColumn(
-            #     "Excluir?",
-            #     disabled=True
-            # )
+            col_config_des["situacao"] = st.column_config.TextColumn("Situação", disabled=True)
+            col_config_des["preco_referencia"] = st.column_config.NumberColumn(
+                "Preço de Referência",
+                format="localized",
+                disabled=True
+            )
+            # etc. para as demais colunas
 
         edited_df_des = st.data_editor(
             df_desativados,
@@ -479,16 +401,13 @@ with st.expander("Itens Desativados"):
             key="editor_desativados"
         )
 
-        # Apenas perfis com permissão podem salvar alterações
         if usuario_perfil in ["cocam", "admin"]:
             if st.button("Salvar Alterações nos Itens Desativados"):
                 for index, row in edited_df_des.iterrows():
-                    # Se o usuário marcou "excluir", removemos do banco de dados
                     if "excluir" in row and row["excluir"]:
                         cursor.execute("DELETE FROM td_insumos WHERE id = ?", (row["id"],))
                         conn.commit()
                     else:
-                        # Caso contrário, apenas atualizamos a situação (e outros campos se desejar)
                         update_insumo(
                             insumo_id=row["id"],
                             elemento=row["elemento_despesa"],
