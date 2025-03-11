@@ -1143,7 +1143,7 @@ with st.form("form_textos_resumo"):
 
         if "Contrato ICMBio" in selected_forms:
             with st.expander("📌 Contrato ICMBio", expanded=False):
-                contratos_disponiveis = ["Contrato ICMBio 1", "Contrato ICMBio 2", "Contrato ICMBio 3"]
+                contratos_disponiveis = ["Contrato ICMBio 1", "Contrato ICMBio 2", "Contrato ICMBio 3", "não informado"]
                 sel_anterior = st.session_state.get("contrato_icmbio_escolhido", [])
                 st.session_state["contrato_icmbio_escolhido"] = st.multiselect(
                     "Quais contratos do ICMBio ...",
