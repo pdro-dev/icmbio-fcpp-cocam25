@@ -221,9 +221,9 @@ with col_filtros:
 
 st.markdown("---")
 
-# ============================================================================
+# =============================================================================
 # 3) Tabela de Itens Sugeridos (Em Análise) - Aplica Filtro
-# ============================================================================
+# =============================================================================
 st.markdown("### Itens Sugeridos (Em Análise)")
 
 df_sugestoes = get_sugestoes_insumos(usuario_perfil)
@@ -232,33 +232,60 @@ df_sugestoes = filtrar_df(df_sugestoes, selected_elemento, selected_espec, selec
 if df_sugestoes.empty:
     st.info("Não há itens sugeridos em análise no momento (ou não correspondem aos filtros).")
 else:
-    # Configurar colunas do data_editor
-    if usuario_perfil in ["cocam", "admin"]:
+    # Definindo config de colunas conforme o perfil:
+    if usuario_perfil == "admin":
+        # Admin pode editar tudo (menos ID). 'situacao' é SelectboxColumn, 
+        # pois tem opções definidas.
         col_config_sug = {
+            "id": st.column_config.TextColumn("ID", disabled=True),
+            "elemento_despesa": st.column_config.TextColumn("Elemento de Despesa", disabled=False),
+            "especificacao_padrao": st.column_config.TextColumn("Especificação Padrão", disabled=False),
+            "descricao_insumo": st.column_config.TextColumn("Descrição do Insumo", disabled=False),
+            "preco_referencia": st.column_config.NumberColumn(
+                "Preço de Referência", format="localized", disabled=False
+            ),
             "situacao": st.column_config.SelectboxColumn(
-                "Situação",
-                width="small",
-                options=["em análise", "ativo", "desativado"]
-            )
+                "Situação", options=["em análise", "ativo", "desativado"], width="small"
+            ),
+            "origem": st.column_config.TextColumn("Origem", disabled=False),
+            "registrado_por": st.column_config.TextColumn("Registrado Por", disabled=False),
+        }
+    elif usuario_perfil == "cocam":
+        # cocam pode editar elemento, espec, descrição, preço e situacao
+        col_config_sug = {
+            "id": st.column_config.TextColumn("ID", disabled=True),
+            "elemento_despesa": st.column_config.TextColumn("Elemento de Despesa", disabled=False),
+            "especificacao_padrao": st.column_config.TextColumn("Especificação Padrão", disabled=False),
+            "descricao_insumo": st.column_config.TextColumn("Descrição do Insumo", disabled=False),
+            "preco_referencia": st.column_config.NumberColumn(
+                "Preço de Referência", format="localized", disabled=False
+            ),
+            "situacao": st.column_config.SelectboxColumn(
+                "Situação", options=["em análise", "ativo", "desativado"], width="small"
+            ),
+            "origem": st.column_config.TextColumn("Origem", disabled=True),
+            "registrado_por": st.column_config.TextColumn("Registrado Por", disabled=True),
         }
     else:
+        # perfil comum: pode editar apenas espec, descrição e preço
         col_config_sug = {
-            "situacao": st.column_config.TextColumn("Situação", disabled=True)
+            "id": st.column_config.TextColumn("ID", disabled=True),
+            "elemento_despesa": st.column_config.TextColumn("Elemento de Despesa", disabled=True),
+            "especificacao_padrao": st.column_config.TextColumn("Especificação Padrão", disabled=False),
+            "descricao_insumo": st.column_config.TextColumn("Descrição do Insumo", disabled=False),
+            "preco_referencia": st.column_config.NumberColumn(
+                "Preço de Referência", format="localized", disabled=False
+            ),
+            "situacao": st.column_config.TextColumn("Situação", disabled=True),
+            "origem": st.column_config.TextColumn("Origem", disabled=True),
+            "registrado_por": st.column_config.TextColumn("Registrado Por", disabled=True),
         }
-    col_config_sug["preco_referencia"] = st.column_config.NumberColumn(
-        "Preço de Referência",
-        format="localized",
-        disabled=False
-    )
 
-    # Outras colunas como você desejar (desabilitadas ou não)
-    # Exemplo simplificado:
-    # (Para mais detalhes de exibição, basta repetir as configs
-    #  como no seu código anterior)
+    # Ordenando as colunas no DF
     df_sugestoes = df_sugestoes[[
-        "situacao", "elemento_despesa", "especificacao_padrao",
-        "descricao_insumo", "preco_referencia", "origem",
-        "registrado_por", "id"
+        "id", "elemento_despesa", "especificacao_padrao",
+        "descricao_insumo", "preco_referencia", "situacao",
+        "origem", "registrado_por"
     ]]
 
     edited_df_sug = st.data_editor(
@@ -285,9 +312,9 @@ else:
 
 st.markdown("---")
 
-# ============================================================================
+# =============================================================================
 # 4) Tabela de Itens Ativos - Aplica Filtro
-# ============================================================================
+# =============================================================================
 st.markdown("### Itens Ativos")
 
 df_ativos = get_insumos_ativos()
@@ -296,27 +323,57 @@ df_ativos = filtrar_df(df_ativos, selected_elemento, selected_espec, selected_in
 if df_ativos.empty:
     st.info("Não há itens ativos no momento (ou não correspondem aos filtros).")
 else:
-    col_config_ativos = {}
-    # Ajusta a coluna 'situacao' conforme o perfil:
-    if usuario_perfil in ["cocam", "admin"]:
-        col_config_ativos["situacao"] = st.column_config.SelectboxColumn(
-            "Situação",
-            width="small",
-            options=["em análise", "ativo", "desativado"]
-        )
+    if usuario_perfil == "admin":
+        # admin pode editar tudo
+        col_config_ativos = {
+            "id": st.column_config.TextColumn("ID", disabled=True),
+            "elemento_despesa": st.column_config.TextColumn("Elemento de Despesa", disabled=False),
+            "especificacao_padrao": st.column_config.TextColumn("Especificação Padrão", disabled=False),
+            "descricao_insumo": st.column_config.TextColumn("Descrição do Insumo", disabled=False),
+            "preco_referencia": st.column_config.NumberColumn(
+                "Preço de Referência", format="localized", disabled=False
+            ),
+            "situacao": st.column_config.SelectboxColumn(
+                "Situação", options=["em análise", "ativo", "desativado"], width="small"
+            ),
+            "origem": st.column_config.TextColumn("Origem", disabled=False),
+            "registrado_por": st.column_config.TextColumn("Registrado Por", disabled=False),
+        }
+    elif usuario_perfil == "cocam":
+        # cocam pode editar APENAS situacao
+        col_config_ativos = {
+            "id": st.column_config.TextColumn("ID", disabled=True),
+            "elemento_despesa": st.column_config.TextColumn("Elemento de Despesa", disabled=True),
+            "especificacao_padrao": st.column_config.TextColumn("Especificação Padrão", disabled=True),
+            "descricao_insumo": st.column_config.TextColumn("Descrição do Insumo", disabled=True),
+            "preco_referencia": st.column_config.NumberColumn(
+                "Preço de Referência", format="localized", disabled=True
+            ),
+            "situacao": st.column_config.SelectboxColumn(
+                "Situação", options=["em análise", "ativo", "desativado"], width="small"
+            ),
+            "origem": st.column_config.TextColumn("Origem", disabled=True),
+            "registrado_por": st.column_config.TextColumn("Registrado Por", disabled=True),
+        }
     else:
-        col_config_ativos["situacao"] = st.column_config.TextColumn("Situação", disabled=True)
-
-    col_config_ativos["preco_referencia"] = st.column_config.NumberColumn(
-        "Preço",
-        format="localized",
-        disabled=False
-    )
+        # perfil comum: não pode editar nada
+        col_config_ativos = {
+            "id": st.column_config.TextColumn("ID", disabled=True),
+            "elemento_despesa": st.column_config.TextColumn("Elemento de Despesa", disabled=True),
+            "especificacao_padrao": st.column_config.TextColumn("Especificação Padrão", disabled=True),
+            "descricao_insumo": st.column_config.TextColumn("Descrição do Insumo", disabled=True),
+            "preco_referencia": st.column_config.NumberColumn(
+                "Preço de Referência", format="localized", disabled=True
+            ),
+            "situacao": st.column_config.TextColumn("Situação", disabled=True),
+            "origem": st.column_config.TextColumn("Origem", disabled=True),
+            "registrado_por": st.column_config.TextColumn("Registrado Por", disabled=True),
+        }
 
     df_ativos = df_ativos[[
         "id", "elemento_despesa", "especificacao_padrao",
-        "descricao_insumo", "preco_referencia", "situacao", "origem",
-        "registrado_por" 
+        "descricao_insumo", "preco_referencia", "situacao",
+        "origem", "registrado_por"
     ]]
 
     edited_df_ativos = st.data_editor(
@@ -327,6 +384,7 @@ else:
         key="editor_ativos"
     )
 
+    # só cocam ou admin podem alterar
     if usuario_perfil in ["cocam", "admin"]:
         if st.button("Salvar Alterações em Itens Ativos"):
             for index, row in edited_df_ativos.iterrows():
@@ -344,9 +402,9 @@ else:
 
 st.markdown("---")
 
-# ============================================================================
+# =============================================================================
 # 5) Expander com Itens Desativados - Aplica Filtro
-# ============================================================================
+# =============================================================================
 with st.expander("Itens Desativados"):
     df_desativados = get_insumos_desativados()
     df_desativados = filtrar_df(df_desativados, selected_elemento, selected_espec, selected_insumo)
@@ -354,44 +412,73 @@ with st.expander("Itens Desativados"):
     if df_desativados.empty:
         st.info("Não há itens desativados no momento (ou não correspondem aos filtros).")
     else:
-        # Exemplo com a lógica de "excluir" igual antes
+        # Se cocam ou admin, pode excluir itens e alterar situacao
         if usuario_perfil in ["cocam", "admin"]:
             df_desativados["excluir"] = False
 
+        # Montamos colunas exibidas
         cols_to_show = [
             "id", "elemento_despesa", "especificacao_padrao", "descricao_insumo",
-            "preco_referencia", "origem", "situacao", "registrado_por"
+            "preco_referencia", "situacao", "origem", "registrado_por"
         ]
         if "excluir" in df_desativados.columns:
             cols_to_show.append("excluir")
 
         df_desativados = df_desativados[cols_to_show]
 
-        col_config_des = {}
-        if usuario_perfil in ["cocam", "admin"]:
-            col_config_des["situacao"] = st.column_config.SelectboxColumn(
-                "Situação",
-                width="small",
-                options=["em análise", "ativo", "desativado"]
-            )
-            col_config_des["preco_referencia"] = st.column_config.NumberColumn(
-                "Preço de Referência",
-                format="localized",
-                disabled=True
-            )
-            col_config_des["excluir"] = st.column_config.CheckboxColumn(
-                "Excluir?",
-                help="Marque para excluir este registro.",
-                disabled=False
-            )
+        # Config da tabela de desativados
+        if usuario_perfil == "admin":
+            # admin pode editar tudo e excluir
+            col_config_des = {
+                "id": st.column_config.TextColumn("ID", disabled=True),
+                "elemento_despesa": st.column_config.TextColumn("Elemento de Despesa", disabled=False),
+                "especificacao_padrao": st.column_config.TextColumn("Especificação Padrão", disabled=False),
+                "descricao_insumo": st.column_config.TextColumn("Descrição do Insumo", disabled=False),
+                "preco_referencia": st.column_config.NumberColumn(
+                    "Preço de Referência", format="localized", disabled=False
+                ),
+                "situacao": st.column_config.SelectboxColumn(
+                    "Situação", options=["em análise", "ativo", "desativado"], width="small"
+                ),
+                "origem": st.column_config.TextColumn("Origem", disabled=False),
+                "registrado_por": st.column_config.TextColumn("Registrado Por", disabled=False),
+                "excluir": st.column_config.CheckboxColumn(
+                    "Excluir?", help="Marque para excluir este registro.", disabled=False
+                ),
+            }
+        elif usuario_perfil == "cocam":
+            # cocam só edita situacao e excluir
+            col_config_des = {
+                "id": st.column_config.TextColumn("ID", disabled=True),
+                "elemento_despesa": st.column_config.TextColumn("Elemento de Despesa", disabled=True),
+                "especificacao_padrao": st.column_config.TextColumn("Especificação Padrão", disabled=True),
+                "descricao_insumo": st.column_config.TextColumn("Descrição do Insumo", disabled=True),
+                "preco_referencia": st.column_config.NumberColumn(
+                    "Preço de Referência", format="localized", disabled=True
+                ),
+                "situacao": st.column_config.SelectboxColumn(
+                    "Situação", options=["em análise", "ativo", "desativado"], width="small"
+                ),
+                "origem": st.column_config.TextColumn("Origem", disabled=True),
+                "registrado_por": st.column_config.TextColumn("Registrado Por", disabled=True),
+                "excluir": st.column_config.CheckboxColumn(
+                    "Excluir?", help="Marque para excluir este registro.", disabled=False
+                ),
+            }
         else:
-            col_config_des["situacao"] = st.column_config.TextColumn("Situação", disabled=True)
-            col_config_des["preco_referencia"] = st.column_config.NumberColumn(
-                "Preço de Referência",
-                format="localized",
-                disabled=True
-            )
-            # etc. para as demais colunas
+            # perfil comum: não edita nada
+            col_config_des = {
+                "id": st.column_config.TextColumn("ID", disabled=True),
+                "elemento_despesa": st.column_config.TextColumn("Elemento de Despesa", disabled=True),
+                "especificacao_padrao": st.column_config.TextColumn("Especificação Padrão", disabled=True),
+                "descricao_insumo": st.column_config.TextColumn("Descrição do Insumo", disabled=True),
+                "preco_referencia": st.column_config.NumberColumn(
+                    "Preço de Referência", format="localized", disabled=True
+                ),
+                "situacao": st.column_config.TextColumn("Situação", disabled=True),
+                "origem": st.column_config.TextColumn("Origem", disabled=True),
+                "registrado_por": st.column_config.TextColumn("Registrado Por", disabled=True),
+            }
 
         edited_df_des = st.data_editor(
             df_desativados,
@@ -401,9 +488,11 @@ with st.expander("Itens Desativados"):
             key="editor_desativados"
         )
 
+        # Apenas cocam ou admin podem salvar (e excluir)
         if usuario_perfil in ["cocam", "admin"]:
             if st.button("Salvar Alterações nos Itens Desativados"):
                 for index, row in edited_df_des.iterrows():
+                    # Se "excluir" estiver marcado, removemos do banco
                     if "excluir" in row and row["excluir"]:
                         cursor.execute("DELETE FROM td_insumos WHERE id = ?", (row["id"],))
                         conn.commit()
