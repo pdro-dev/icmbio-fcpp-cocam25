@@ -855,6 +855,8 @@ with st.form("form_textos_resumo"):
             </div>
             """, unsafe_allow_html=True)
 
+        # st.divider()
+
         # 1) Carrega do banco
         conn = sqlite3.connect(DB_PATH)
         df_uc = pd.read_sql_query("SELECT * FROM tf_distribuicao_elegiveis", conn)
@@ -988,7 +990,7 @@ with st.form("form_textos_resumo"):
         /* tooltip container */
         .tooltip {
             position: relative;
-            display: inline-block;'
+            display: inline-block;
         }
         .tooltip .tooltiptext {
             visibility: hidden;
@@ -1009,8 +1011,16 @@ with st.form("form_textos_resumo"):
         .tooltip:hover .tooltiptext {
             visibility: visible;
         }
+
+        /* Centraliza a segunda coluna (onde está o '+') */
+        .table-container table th:nth-child(2),
+        .table-container table td:nth-child(2) {
+            text-align: center !important;
+            vertical-align: middle;
+        }
         </style>
         """
+
 
         st.markdown(custom_css, unsafe_allow_html=True)
         st.markdown(f"<div class='table-container'>{html_table}</div>", unsafe_allow_html=True)
