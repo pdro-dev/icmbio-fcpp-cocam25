@@ -5,6 +5,4 @@ streamlit-aggrid
 openpyxl
 matplotlib
 streamlit-pdf-viewer
-fpdf
 xhtml2pdf
-math
