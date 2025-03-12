@@ -305,75 +305,29 @@ if "insumos" not in st.session_state:
 
 
 
-# -----------------------------------------------------------------------------
-#          Função para exibir informações complementares na barra lateral
-# -----------------------------------------------------------------------------
+# # -----------------------------------------------------------------------------
+# #          Função para exibir informações complementares na barra lateral
+# # -----------------------------------------------------------------------------
 def exibir_info_lateral(id_iniciativa: int):
-    """Exibe no sidebar informações complementares da iniciativa."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    # -----------------------------------------------------------------------------
+    #          Exibir apenas informações do usuário logado na barra lateral
+    # -----------------------------------------------------------------------------
+    st.sidebar.write("### 🔑 Usuário Logado")
 
-    st.sidebar.write("### Informações da Iniciativa")
+    # Recupera as informações do usuário logado do session_state
+    cpf_usuario = st.session_state.get("cpf", "(não informado)")
+    nome_usuario = st.session_state.get("nome", "(não informado)")
+    email_usuario = st.session_state.get("email", "(não informado)")
+    setor_usuario = st.session_state.get("setor", "(não informado)")
+    perfil_usuario = st.session_state.get("perfil", "comum")
 
-    # 1) tf_cadastros_iniciativas + demandante
-    query_inic = """
-    SELECT ci.id_demandante,
-           COUNT(DISTINCT ci.cnuc) AS num_unidades,
-           d.nome_demandante
-    FROM tf_cadastros_iniciativas ci
-    JOIN td_demandantes d ON ci.id_demandante = d.id_demandante
-    WHERE ci.id_iniciativa = ?
-    GROUP BY ci.id_demandante
-    """
-    row_inic = cursor.execute(query_inic, (id_iniciativa,)).fetchone()
-    if row_inic:
-        _, num_unidades, nome_demandante = row_inic
-        st.sidebar.write(f"**Demandante:** {nome_demandante}")
-        st.sidebar.write(f"**Número de Unidades:** {num_unidades}")
-    else:
-        st.sidebar.info("Iniciativa não encontrada em tf_cadastros_iniciativas.")
+    # Exibe as informações na barra lateral
+    st.sidebar.write(f"**👤 Nome:** {nome_usuario}")
+    st.sidebar.write(f"**📧 E-mail:** {email_usuario}")
+    st.sidebar.write(f"**📌 Diretoria:** {setor_usuario}")
+    st.sidebar.write(f"**🔰 Perfil:** {perfil_usuario}")
 
-    # 2) td_dados_resumos_sei
-    row_resumo = cursor.execute("""
-        SELECT diretoria, coordenação_geral, coordenação
-        FROM td_dados_resumos_sei
-        WHERE id_resumo = ?
-        LIMIT 1
-    """, (id_iniciativa,)).fetchone()
-    if row_resumo:
-        dir_, coord_geral, coord_ = row_resumo
-        st.sidebar.write(f"**Diretoria:** {dir_ if dir_ else 'sem informação'}")
-        st.sidebar.write(f"**Coord. Geral:** {coord_geral if coord_geral else 'sem informação'}")
-        st.sidebar.write(f"**Coordenação:** {coord_ if coord_ else 'sem informação'}")
-    else:
-        st.sidebar.info("Sem resumo SEI cadastrado para esta iniciativa.")
 
-    # 3) Eixos existentes (último registro)
-    row_eixos = cursor.execute("""
-        SELECT eixos_tematicos
-        FROM tf_cadastro_regras_negocio
-        WHERE id_iniciativa = ?
-        ORDER BY data_hora DESC
-        LIMIT 1
-    """, (id_iniciativa,)).fetchone()
-
-    conn.close()
-
-    if row_eixos:
-        eixos_tematicos_json = row_eixos[0]
-        if eixos_tematicos_json:
-            eixos_list = json.loads(eixos_tematicos_json)
-            nomes = [e.get("nome_eixo", "Eixo Sem Nome") for e in eixos_list]
-            st.sidebar.pills(
-                "Eixos Temáticos gravados:",
-                options=nomes,
-                default=None,
-                disabled=True
-            )
-        else:
-            st.sidebar.info("Nenhum eixo temático cadastrado no momento.")
-    else:
-        st.sidebar.info("Nenhum eixo temático cadastrado.")
 
 
 # -----------------------------------------------------------------------------
@@ -498,7 +452,7 @@ if "carregou_iniciativa" not in st.session_state or st.session_state["carregou_i
 
 
 # Exibe na barra lateral (checkbox)
-if st.sidebar.checkbox("Exibir informações da iniciativa", value=True):
+if st.sidebar.checkbox("Exibir informações do usuário", value=False):
     exibir_info_lateral(nova_iniciativa)
 
 st.divider()
@@ -634,65 +588,34 @@ with st.form("form_textos_resumo"):
         )
 
     # Aba de Demais Informações
+    # Aba de Demandante (somente Diretoria e Usuário Responsável)
     with tab_demandante:
-        st.subheader("Demais Informações")
-        st.caption("Edição de Informações do Setor Demandante.")
+        st.markdown("##### Informações do Usuário Responsável")
 
-        # Verifica se os dados existem no session_state, senão busca no banco
-        if not st.session_state.get("demais_informacoes"):
-            conn = sqlite3.connect(DB_PATH)
-            query = """
-                SELECT diretoria, coordenação_geral, coordenação, demandante
-                FROM td_dados_resumos_sei
-                WHERE id_resumo = ?
-                LIMIT 1
-            """
-            row = conn.execute(query, (nova_iniciativa,)).fetchone()
-            conn.close()
 
-            if row:
-                st.session_state["demais_informacoes"] = {
-                    "diretoria": row[0] or "",
-                    "coordenacao_geral": row[1] or "",
-                    "coordenacao": row[2] or "",
-                    "demandante": row[3] or ""
-                }
-            else:
-                st.session_state["demais_informacoes"] = {
-                    "diretoria": "",
-                    "coordenacao_geral": "",
-                    "coordenacao": "",
-                    "demandante": ""
-                }
+        # Recupera as informações do usuário logado do session_state
+        nome_usuario = st.session_state.get("nome", "(não informado)")
+        email_usuario = st.session_state.get("email", "(não informado)")
+        setor_usuario = st.session_state.get("setor", "(não informado)")
+        perfil_usuario = st.session_state.get("perfil", "comum")
 
-        # Garante que "demais_informacoes" é um dicionário válido
-        if not isinstance(st.session_state["demais_informacoes"], dict):
-            try:
-                st.session_state["demais_informacoes"] = json.loads(st.session_state["demais_informacoes"])
-            except:
-                st.session_state["demais_informacoes"] = {}
+        # Exibe apenas informações do usuário responsável pelo preenchimento
+        st.write(f"**👤 Nome do Preenchedor:** {nome_usuario}")
+        st.write(f"**📧 E-mail:** {email_usuario}")
+        st.write(f"**📌 Diretoria:** {setor_usuario}")
+        # st.write(f"**🔰 Perfil:** {perfil_usuario}")
 
-        # Lê os valores do session_state (garantindo que não sejam None)
-        di = st.session_state["demais_informacoes"].get("diretoria", "")
-        cg = st.session_state["demais_informacoes"].get("coordenacao_geral", "")
-        co = st.session_state["demais_informacoes"].get("coordenacao", "")
-        dm = st.session_state["demais_informacoes"].get("demandante", "")
+        st.divider()
+        st.info("Estas informações são registradas automaticamente e não podem ser alteradas.")
 
-        st.caption("Preencha os campos abaixo conforme necessário:")
-        diretoria_novo    = st.text_input("Diretoria:", value=di)
-        coord_geral_novo  = st.text_input("Coordenação Geral:", value=cg)
-        coord_novo        = st.text_input("Coordenação:", value=co)
-        demandante_novo   = st.text_input("Demandante (Sigla):", value=dm, disabled=True)
+        # Salvar informações do usuário logado na sessão
+        st.session_state["demais_informacoes"] = {
+            "diretoria": st.session_state.get("setor", "Não informado"),
+            "usuario_nome": st.session_state.get("nome", "Não informado"),
+            "usuario_email": st.session_state.get("email", "Não informado"),
+            "perfil": st.session_state.get("perfil", "Não informado"),
+        }
 
-        # # Atualiza session_state quando os valores forem alterados
-        # if st.button("Salvar Informações do Demandante"):
-        #     st.session_state["demais_informacoes"] = {
-        #         "diretoria": diretoria_novo,
-        #         "coordenacao_geral": coord_geral_novo,
-        #         "coordenacao": coord_novo,
-        #         "demandante": demandante_novo
-        #     }
-        #     st.success("Informações do demandante atualizadas com sucesso!")
 
 
 
@@ -1340,7 +1263,7 @@ with st.form("form_textos_resumo"):
 st.divider()
 col1, col2, col3 = st.columns(3)
 with col2:
-    if st.button("📝 Finalizar Cadastro", key="btn_salvar_geral"):
+    if st.button("📝 Enviar Cadastro", key="btn_salvar_geral"):
         salvar_dados_iniciativa(
             id_iniciativa=nova_iniciativa,
             usuario=cpf_usuario,

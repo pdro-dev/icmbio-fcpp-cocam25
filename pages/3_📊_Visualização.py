@@ -397,36 +397,24 @@ LABEL_MAP = {
 }
 
 def format_demais_informacoes(json_str: str) -> str:
-    """Formata 'Demais Informações' em HTML (bullets se dicionário ou lista)."""
+    """Formata 'Demais Informações' para exibir apenas dados do usuário responsável."""
     try:
         data = json.loads(json_str)
     except:
-        return html.escape(json_str)
+        return "<p>Erro ao carregar informações.</p>"
 
     if not data:
         return "<p>Sem informações adicionais.</p>"
 
-    if isinstance(data, dict):
-        html_list = "<ul>"
-        for k, v in data.items():
-            label = LABEL_MAP.get(k, k)
-            if v is None or v == "":
-                v = "Não informado"
-            val_escaped = html.escape(str(v))
-            html_list += f"<li><strong>{html.escape(str(label))}</strong>: {val_escaped}</li>"
-        html_list += "</ul>"
-        return html_list
-    elif isinstance(data, list):
-        if not data:
-            return "<p>Sem informações adicionais.</p>"
-        html_list = "<ul>"
-        for item in data:
-            item_escaped = html.escape(str(item))
-            html_list += f"<li>{item_escaped}</li>"
-        html_list += "</ul>"
-        return html_list
+    # Ajuste para exibir apenas Diretoria e Usuário Responsável
+    html_list = "<ul>"
+    html_list += f"<li><strong>📌 Diretoria:</strong> {html.escape(str(data.get('diretoria', 'Não informado')))}</li>"
+    html_list += f"<li><strong>👤 Usuário Responsável:</strong> {html.escape(str(data.get('usuario_nome', 'Não informado')))}</li>"
+    html_list += f"<li><strong>📧 E-mail:</strong> {html.escape(str(data.get('usuario_email', 'Não informado')))}</li>"
+    html_list += f"<li><strong>🔰 Perfil:</strong> {html.escape(str(data.get('perfil', 'Não informado')))}</li>"
+    html_list += "</ul>"
 
-    return html.escape(str(data))
+    return html_list
 
 
 ###############################################################################
