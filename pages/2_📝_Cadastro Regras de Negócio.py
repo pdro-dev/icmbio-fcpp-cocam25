@@ -838,33 +838,36 @@ with st.form("form_textos_resumo"):
 
     with tab_uc:
 
-        # dividir header em duas colunas
+        st.subheader("Alocação de Recursos por Eixo Temático")
+
         col1, col2 = st.columns([1, 1])
 
         with col1:
-            st.subheader("Distribuição de Recursos por Eixo Temático")
+            st.markdown("""
+            <div style="text-align: center; background-color: #d9edf7; padding: 10px; border-radius: 5px; vertical-align: middle;">
+                <strong>Unidades de Conservação elegíveis com recursos disponíveis</strong>
+            </div>
+            """, unsafe_allow_html=True)
 
         with col2:
-            # informação destaque para o usuário: Ação de Aplicação = "Implementação de UCs"
+            st.markdown("""
+            <div style="text-align: center; background-color: #d9edf7; padding: 10px; border-radius: 5px; vertical-align: middle;">
+                <strong>Ação de Aplicação = Implementação da UC</strong>
+            </div>
+            """, unsafe_allow_html=True)
 
-
-            st.info("Ação de Aplicação: Implementação da UC")
-
-        # 1) Carrega DataFrame
+        # Carrega as Unidades de Conservação disponíveis para distribuição
         conn = sqlite3.connect(DB_PATH)
         df_uc = pd.read_sql_query("SELECT * FROM tf_distribuicao_elegiveis", conn)
         conn.close()
 
-        # 2) Filtra pelo id_iniciativa
         df_uc = df_uc[df_uc["id_iniciativa"] == nova_iniciativa]
         if df_uc.empty:
             st.warning("Nenhuma Unidade de Conservação disponível para distribuição de recursos.")
             st.stop()
 
-        # 3) Escolhe as colunas a exibir
         colunas = [
             "Unidade de Conservação",
-            "AÇÃO DE APLICAÇÃO",
             "TetoSaldo disponível",
             "TetoPrevisto 2025",
             "TetoPrevisto 2026",
@@ -872,11 +875,9 @@ with st.form("form_textos_resumo"):
             "TetoTotalDisponivel",
             "A Distribuir"
         ]
-        # Filtra para colunas que realmente existam
         colunas_existentes = [c for c in colunas if c in df_uc.columns]
         df_uc = df_uc[colunas_existentes]
 
-        # 4) Formata colunas numéricas como R$ e com <div align=right>
         def formata_real(valor):
             if pd.isnull(valor):
                 return ""
@@ -894,10 +895,8 @@ with st.form("form_textos_resumo"):
             if col in df_uc.columns:
                 df_uc[col] = df_uc[col].apply(formata_real)
 
-        # 5) Renomeia colunas para títulos amigáveis
         df_uc.rename(columns={
             "Unidade de Conservação": "Unidade de Conservação",
-            "AÇÃO DE APLICAÇÃO": "Ação de Aplicação",
             "TetoSaldo disponível": "Teto Saldo Disponível",
             "TetoPrevisto 2025": "Teto 2025",
             "TetoPrevisto 2026": "Teto 2026",
@@ -906,23 +905,21 @@ with st.form("form_textos_resumo"):
             "A Distribuir": "Saldo a Distribuir"
         }, inplace=True)
 
-        st.write("Unidades de Conservação elegíveis com recursos disponíveis para distribuição:")
 
-        # 6) Converte o DF para HTML, sem escapar tags
+        
+
+        
+
         html_table = df_uc.to_html(index=False, escape=False)
 
-        # 7) CSS para sticky header + bordas, etc.
-        #    - container com max-height e overflow para scroll interno
-        #    - thead th com position: sticky
         sticky_css = """
         <style>
         .table-container {
             max-height: 600px; /* altura que desejar */
-            overflow-y: auto;  /* scroll vertical */
+            overflow-y: auto;  
             margin-bottom: 1rem;
-            border: 1px solid #ccc; /* borda ao redor do container */
+            border: 1px solid #ccc; 
         }
-        /* Ajusta a tabela em si */
         .table-container table {
             border-collapse: collapse;
             width: 100%;
@@ -931,19 +928,20 @@ with st.form("form_textos_resumo"):
             border: 1px solid #ddd;
             padding: 8px;
         }
+        /* Cabeçalho fixo e centralizado */
         .table-container th {
             background-color: #f2f2f2;
-            /* posição sticky no topo do container */
             position: sticky;
             top: 0;
             z-index: 2;
+            text-align: center; /* <--- centraliza o texto do cabeçalho */
         }
         </style>
         """
 
-        # 8) Exibe CSS + HTML final
         st.markdown(sticky_css, unsafe_allow_html=True)
         st.markdown(f"<div class='table-container'>{html_table}</div>", unsafe_allow_html=True)
+
 
 
 
