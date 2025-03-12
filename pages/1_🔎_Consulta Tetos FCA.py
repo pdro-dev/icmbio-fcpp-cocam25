@@ -20,8 +20,9 @@ if st.session_state["perfil"] != "admin":
     st.warning("🔒 Acesso negado! Você não tem permissão para acessar esta seção.")
     st.stop()
 
+
 st.set_page_config(
-    page_title="Consultar Registros",
+    page_title="Consultar Tetos FCA 2025",
     page_icon="♾️",
     layout="wide"
     )
