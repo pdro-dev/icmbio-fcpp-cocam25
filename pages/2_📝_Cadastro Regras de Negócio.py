@@ -836,12 +836,11 @@ with st.form("form_textos_resumo"):
     # 6) UNIDADES DE CONSERVAÇÃO - Distribuição de Recursos (tab_uc) - EM HTML
     # ---------------------------------------------------------
 
-    with tab_uc:
 
+    with tab_uc:
         st.subheader("Alocação de Recursos por Eixo Temático")
 
         col1, col2 = st.columns([1, 1])
-
         with col1:
             st.markdown("""
             <div style="text-align: center; background-color: #d9edf7; padding: 10px; border-radius: 5px; vertical-align: middle;">
@@ -856,7 +855,7 @@ with st.form("form_textos_resumo"):
             </div>
             """, unsafe_allow_html=True)
 
-        # Carrega as Unidades de Conservação disponíveis para distribuição
+        # 1) Carrega do banco
         conn = sqlite3.connect(DB_PATH)
         df_uc = pd.read_sql_query("SELECT * FROM tf_distribuicao_elegiveis", conn)
         conn.close()
@@ -866,59 +865,110 @@ with st.form("form_textos_resumo"):
             st.warning("Nenhuma Unidade de Conservação disponível para distribuição de recursos.")
             st.stop()
 
-        colunas = [
-            "Unidade de Conservação",
+        # 2) Estas colunas extras irão compor o conteúdo do tooltip:
+        col_tooltip = [
             "TetoSaldo disponível",
             "TetoPrevisto 2025",
             "TetoPrevisto 2026",
-            "TetoPrevisto 2027",
+            "TetoPrevisto 2027"
+        ]
+        # Só mantém as que realmente existem
+        col_tooltip = [c for c in col_tooltip if c in df_uc.columns]
+
+        # 3) Colunas principais na tabela (sem tooltip)
+        colunas_principais = [
+            "Unidade de Conservação",
             "TetoTotalDisponivel",
             "A Distribuir"
         ]
-        colunas_existentes = [c for c in colunas if c in df_uc.columns]
-        df_uc = df_uc[colunas_existentes]
+        colunas_principais = [c for c in colunas_principais if c in df_uc.columns]
 
-        def formata_real(valor):
+        # Juntamos com as do tooltip para termos todos os dados no df
+        df_uc = df_uc[colunas_principais + col_tooltip]
+
+        # 4) Função para formatar numericamente e remover quebras de linha
+        def fmt_real(valor):
             if pd.isnull(valor):
                 return ""
-            return f"<div style='text-align:right;'>R$ {valor:,.2f}</div>"
+            val_str = str(valor).replace("\\n", " ").replace("\n", " ").strip()
+            try:
+                val_float = float(val_str)
+                # Alinhar à direita
+                return f"<div style='text-align:right;'>R$ {val_float:,.2f}</div>"
+            except:
+                return f"<div style='text-align:right;'>{val_str}</div>"
 
-        colunas_numericas = [
-            "TetoSaldo disponível",
-            "TetoPrevisto 2025",
-            "TetoPrevisto 2026",
-            "TetoPrevisto 2027",
-            "TetoTotalDisponivel",
-            "A Distribuir"
-        ]
-        for col in colunas_numericas:
-            if col in df_uc.columns:
-                df_uc[col] = df_uc[col].apply(formata_real)
+        # 5) Coluna “TetoTotalDisponivel” -> formata valor sem tooltip
+        if "TetoTotalDisponivel" in df_uc.columns:
+            df_uc["TetoTotalDisponivel"] = df_uc["TetoTotalDisponivel"].apply(fmt_real)
 
-        df_uc.rename(columns={
+        # 6) Coluna “A Distribuir” também formatada
+        if "A Distribuir" in df_uc.columns:
+            df_uc["A Distribuir"] = df_uc["A Distribuir"].apply(fmt_real)
+
+        # 7) Cria nova coluna “Detalhes” com um ícone que terá tooltip
+        def build_tooltip_icon(row):
+            """
+            Constrói um ícone HTML com as informações das colunas col_tooltip em hover.
+            """
+            lines = []
+            # Cada coluna do tooltip, formatada
+            for c in col_tooltip:
+                # ex: "TetoSaldo disponível"
+                label = c.replace("TetoSaldo", "Teto Saldo").replace("Previsto ", "")
+                # Formatamos o valor
+                valor_format = fmt_real(row.get(c, ""))  
+                # Remove a <div ...> para não ficar duplicado. Se preferir, pode manter <div> 
+                # ou extrair só o texto de "valor_format".
+                # Aqui, pegamos o inner do <div>, que é "R$ x"
+                v_text = valor_format.replace("<div style='text-align:right;'>","").replace("</div>","")
+
+                lines.append(f"{label}: <strong>{v_text}</strong>")
+
+            tooltip_content = "<br>".join(lines)
+
+            # HTML do ícone + tooltip
+            html_icon = f"""
+<span class="tooltip">
+<div style="text-align:center; cursor:pointer;">ℹ️</div>
+<span class="tooltiptext">{tooltip_content}</span>
+</span>
+"""
+            return html_icon.replace("\n", " ")
+
+        # Cria a coluna “Detalhes” para cada linha
+        df_uc["Detalhes"] = df_uc.apply(build_tooltip_icon, axis=1)
+
+        # 8) Renomeia as colunas para exibir
+        rename_map = {
             "Unidade de Conservação": "Unidade de Conservação",
-            "TetoSaldo disponível": "Teto Saldo Disponível",
-            "TetoPrevisto 2025": "Teto 2025",
-            "TetoPrevisto 2026": "Teto 2026",
-            "TetoPrevisto 2027": "Teto 2027",
             "TetoTotalDisponivel": "Teto Total",
-            "A Distribuir": "Saldo a Distribuir"
-        }, inplace=True)
+            "A Distribuir": "Saldo a Distribuir",
+            "Detalhes": "+"
+        }
+        df_uc.rename(columns=rename_map, inplace=True)
 
+        # 9) Decide as colunas finais (exibimos a nova "+")
+        colunas_finais = [
+            "Unidade de Conservação",
+            "+",
+            "Teto Total",
+            "Saldo a Distribuir"
+            
+        ]
+        df_uc = df_uc[colunas_finais]
 
-        
-
-        
-
+        # 10) Converte para HTML
         html_table = df_uc.to_html(index=False, escape=False)
 
-        sticky_css = """
+        # 11) CSS
+        custom_css = """
         <style>
         .table-container {
-            max-height: 600px; /* altura que desejar */
-            overflow-y: auto;  
+            max-height: 600px;
+            overflow-y: auto;
             margin-bottom: 1rem;
-            border: 1px solid #ccc; 
+            border: 1px solid #ccc;
         }
         .table-container table {
             border-collapse: collapse;
@@ -928,19 +978,45 @@ with st.form("form_textos_resumo"):
             border: 1px solid #ddd;
             padding: 8px;
         }
-        /* Cabeçalho fixo e centralizado */
         .table-container th {
             background-color: #f2f2f2;
             position: sticky;
             top: 0;
             z-index: 2;
-            text-align: center; /* <--- centraliza o texto do cabeçalho */
+            text-align: center;
+        }
+        /* tooltip container */
+        .tooltip {
+            position: relative;
+            display: inline-block;'
+        }
+        .tooltip .tooltiptext {
+            visibility: hidden;
+            width: 300px;
+            background-color: #fafafa;
+            color: #000;
+            text-align: left;
+            border: 1px solid #ccc;
+            padding: 5px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            position: absolute;
+            z-index: 1;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        .tooltip:hover .tooltiptext {
+            visibility: visible;
         }
         </style>
         """
 
-        st.markdown(sticky_css, unsafe_allow_html=True)
+        st.markdown(custom_css, unsafe_allow_html=True)
         st.markdown(f"<div class='table-container'>{html_table}</div>", unsafe_allow_html=True)
+
+
+
 
 
 
