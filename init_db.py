@@ -53,6 +53,39 @@ def init_database():
     """, ("11111111111", "COCAM", " ", "COCAM", "cocam"))
 
 
+
+    # Caminho do arquivo carregado
+    file_path = "dados/base_iniciativas_consolidada.xlsx"
+
+    # Carregar o arquivo Excel
+    xls = pd.ExcelFile(file_path)
+
+    # Listar as planilhas disponíveis
+    xls.sheet_names
+
+    # Carregar a planilha específica
+    df = pd.read_excel(xls, sheet_name="BASE_INICIATIVAS_CONSOLIDADA")
+
+    # Exibir as primeiras linhas e colunas disponíveis
+    df.head(), df.columns
+
+
+    # Converter o DataFrame para uma estrutura de dicionários
+    json_data = df.to_dict(orient="records")
+
+    # Caminho para salvar o arquivo JSON
+    json_file_path = "dados/base_iniciativas_consolidada.json"
+
+    # Salvar como JSON formatado
+    with open(json_file_path, "w", encoding="utf-8") as json_file:
+        json.dump(json_data, json_file, ensure_ascii=False, indent=4)
+    
+
+    # Retornar o caminho do arquivo JSON gerado
+    # json_file_path
+
+
+
     # ----------------------------------------------------------------------------
     # 2) LEITURA DA BASE JSON (df_base) E CRIAÇÃO DE TABELAS DE APOIO
     # ----------------------------------------------------------------------------

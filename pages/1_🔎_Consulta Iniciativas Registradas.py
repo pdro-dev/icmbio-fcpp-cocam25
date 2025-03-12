@@ -33,6 +33,8 @@ def load_data_from_db():
     conn.close()
     return df
 
+
+
 # 📌 Verifica se o banco de dados existe antes de continuar
 if not os.path.exists(db_path):
     st.warning("Banco de dados não encontrado. Verifique se executou o init_db.py.")
@@ -45,6 +47,14 @@ else:
     else:
         df_filtrado = df[df["DEMANDANTE"] == st.session_state["setor"]]
         df = df_filtrado
+
+
+    # debug 
+    st.write(df)
+    st.write(st.session_state["setor"])
+    st.write(st.session_state["perfil"])
+
+    
 
 
 
