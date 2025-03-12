@@ -459,6 +459,8 @@ st.divider()
 
 st.write(f"**Iniciativa Selecionada:** {iniciativas.set_index('id_iniciativa').loc[nova_iniciativa, 'nome_iniciativa']}")
 
+st.divider()
+
 
 
 # ---------------------------------------------------------
@@ -831,103 +833,194 @@ with st.form("form_textos_resumo"):
 
 
     # ---------------------------------------------------------
-    # 6) UNIDADES DE CONSERVAÇÃO - Distribuição de Recursos
+    # 6) UNIDADES DE CONSERVAÇÃO - Distribuição de Recursos (tab_uc) - EM HTML
     # ---------------------------------------------------------
 
     with tab_uc:
-        st.subheader("Distribuição de Recursos por Eixo")
 
+        # dividir header em duas colunas
+        col1, col2 = st.columns([1, 1])
+
+        with col1:
+            st.subheader("Distribuição de Recursos por Eixo Temático")
+
+        with col2:
+            # informação destaque para o usuário: Ação de Aplicação = "Implementação de UCs"
+
+
+            st.info("Ação de Aplicação: Implementação da UC")
+
+        # 1) Carrega DataFrame
         conn = sqlite3.connect(DB_PATH)
-
-        # 🔍 Carregar SOMENTE as colunas necessárias do banco,
-        # sem repetir TetoTotalDisponivel e "A Distribuir".
-        df_uc = pd.read_sql_query(
-            """
-            SELECT
-                id,
-                id_demandante,
-                id_iniciativa,
-                id_acao,
-                TetoTotalDisponivel
-            FROM tf_distribuicao_elegiveis
-            WHERE id_iniciativa = ?
-            """,
-            conn,
-            params=[nova_iniciativa]
-        )
-
+        df_uc = pd.read_sql_query("SELECT * FROM tf_distribuicao_elegiveis", conn)
         conn.close()
 
-        # Criamos manualmente as colunas "Unidade", "Acao" e "A Distribuir"
-        df_uc["Unidade"] = "Unidade de Conservação"   # valor fixo
-        df_uc["Acao"] = "AÇÃO DE APLICAÇÃO"           # valor fixo
-        df_uc["A Distribuir"] = 0.00                  # inicia com zero, será calculado
+        # 2) Filtra pelo id_iniciativa
+        df_uc = df_uc[df_uc["id_iniciativa"] == nova_iniciativa]
+        if df_uc.empty:
+            st.warning("Nenhuma Unidade de Conservação disponível para distribuição de recursos.")
+            st.stop()
 
-        # 🔍 Obter os eixos temáticos selecionados pelo usuário
-        colunas_eixos = [eixo["nome_eixo"] for eixo in st.session_state["eixos_tematicos"]]
+        # 3) Escolhe as colunas a exibir
+        colunas = [
+            "Unidade de Conservação",
+            "AÇÃO DE APLICAÇÃO",
+            "TetoSaldo disponível",
+            "TetoPrevisto 2025",
+            "TetoPrevisto 2026",
+            "TetoPrevisto 2027",
+            "TetoTotalDisponivel",
+            "A Distribuir"
+        ]
+        # Filtra para colunas que realmente existam
+        colunas_existentes = [c for c in colunas if c in df_uc.columns]
+        df_uc = df_uc[colunas_existentes]
 
-        # Criar colunas para os eixos temáticos no DataFrame
-        for eixo in colunas_eixos:
-            if eixo not in df_uc.columns:  # evita duplicar
-                df_uc[eixo] = 0.00
+        # 4) Formata colunas numéricas como R$ e com <div align=right>
+        def formata_real(valor):
+            if pd.isnull(valor):
+                return ""
+            return f"<div style='text-align:right;'>R$ {valor:,.2f}</div>"
 
-        # Funções auxiliares
-        def recalcular_a_distribuir():
-            df_uc["A Distribuir"] = df_uc["TetoTotalDisponivel"] - df_uc[colunas_eixos].sum(axis=1)
-            st.session_state["df_uc_editado"] = df_uc
+        colunas_numericas = [
+            "TetoSaldo disponível",
+            "TetoPrevisto 2025",
+            "TetoPrevisto 2026",
+            "TetoPrevisto 2027",
+            "TetoTotalDisponivel",
+            "A Distribuir"
+        ]
+        for col in colunas_numericas:
+            if col in df_uc.columns:
+                df_uc[col] = df_uc[col].apply(formata_real)
 
-        def salvar_dados_uc():
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            for _, row in st.session_state["df_uc_editado"].iterrows():
-                # Monta query com colunas de eixo
-                query = f"""
-                    UPDATE tf_distribuicao_elegiveis
-                    SET {', '.join([f'"{eixo}" = ?' for eixo in colunas_eixos])},
-                        "A Distribuir" = ?
-                    WHERE id = ?
-                """
-                valores = [row[eixo] for eixo in colunas_eixos] + [row["A Distribuir"], row["id"]]
-                cursor.execute(query, valores)
-            conn.commit()
-            conn.close()
-            st.success("✅ Distribuição de recursos salva com sucesso!")
+        # 5) Renomeia colunas para títulos amigáveis
+        df_uc.rename(columns={
+            "Unidade de Conservação": "Unidade de Conservação",
+            "AÇÃO DE APLICAÇÃO": "Ação de Aplicação",
+            "TetoSaldo disponível": "Teto Saldo Disponível",
+            "TetoPrevisto 2025": "Teto 2025",
+            "TetoPrevisto 2026": "Teto 2026",
+            "TetoPrevisto 2027": "Teto 2027",
+            "TetoTotalDisponivel": "Teto Total",
+            "A Distribuir": "Saldo a Distribuir"
+        }, inplace=True)
 
-        # Recalcular saldo inicialmente
-        recalcular_a_distribuir()
+        st.write("Unidades de Conservação elegíveis com recursos disponíveis para distribuição:")
 
-        # Monta coluna_config para st.data_editor
-        column_config = {
-            "Unidade": st.column_config.TextColumn("Unidade de Conservação", disabled=True),
-            "Acao": st.column_config.TextColumn("Ação de Aplicação", disabled=True),
-            "TetoTotalDisponivel": st.column_config.NumberColumn("Teto Total Disponível", disabled=True, format="accounting"),
-            "A Distribuir": st.column_config.NumberColumn("Saldo a Distribuir", disabled=True, format="accounting")
+        # 6) Converte o DF para HTML, sem escapar tags
+        html_table = df_uc.to_html(index=False, escape=False)
+
+        # 7) CSS para sticky header + bordas, etc.
+        #    - container com max-height e overflow para scroll interno
+        #    - thead th com position: sticky
+        sticky_css = """
+        <style>
+        .table-container {
+            max-height: 600px; /* altura que desejar */
+            overflow-y: auto;  /* scroll vertical */
+            margin-bottom: 1rem;
+            border: 1px solid #ccc; /* borda ao redor do container */
         }
-        for eixo in colunas_eixos:
-            column_config[eixo] = st.column_config.NumberColumn(eixo, format="accounting")
+        /* Ajusta a tabela em si */
+        .table-container table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        .table-container th, .table-container td {
+            border: 1px solid #ddd;
+            padding: 8px;
+        }
+        .table-container th {
+            background-color: #f2f2f2;
+            /* posição sticky no topo do container */
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }
+        </style>
+        """
 
-        # Ordena as colunas que serão exibidas
-        colunas_para_exibir = ["Unidade", "Acao", "TetoTotalDisponivel", "A Distribuir"] + colunas_eixos
-        df_exibicao = df_uc[colunas_para_exibir].copy()
-
-        def on_edit():
-            recalcular_a_distribuir()
-            st.rerun()
-
-        # Data Editor
-        edited_df = st.data_editor(
-            df_exibicao,
-            column_config=column_config,
-            use_container_width=True,
-            key="editor_uc",
-            on_change=on_edit,
-            hide_index=True
-        )
-
-        if st.button("💾 Salvar Distribuição de Recursos"):
-            salvar_dados_uc()
+        # 8) Exibe CSS + HTML final
+        st.markdown(sticky_css, unsafe_allow_html=True)
+        st.markdown(f"<div class='table-container'>{html_table}</div>", unsafe_allow_html=True)
 
 
+
+
+    # # ---------------------------------------------------------
+    # # 6) UNIDADES DE CONSERVAÇÃO - Distribuição de Recursos (tab_uc) - EM DATAFRAME 
+    # # ---------------------------------------------------------
+    # with tab_uc:
+    #     st.subheader("Distribuição de Recursos por Unidade de Conservação")
+
+    #     conn = sqlite3.connect(DB_PATH)
+    #     df_uc = pd.read_sql_query("SELECT * FROM tf_distribuicao_elegiveis", conn)
+    #     conn.close()
+
+    #     if df_uc.empty:
+    #         st.warning("Nenhuma Unidade de Conservação disponível para distribuição de recursos.")
+    #         st.stop()
+
+    #     # Filtra pela iniciativa
+    #     df_uc = df_uc[df_uc["id_iniciativa"] == nova_iniciativa]
+
+    #     # Se desejar, ajuste a ordem e o nome das colunas
+    #     # Colunas mencionadas na imagem: TetoSaldo disponível, TetoPrevisto 2025,
+    #     # TetoPrevisto 2026, TetoPrevisto 2027, TetoTotalDisponivel, A Distribuir
+    #     # e também as colunas de UC e Ação
+    #     colunas = [
+    #         "Unidade de Conservação",
+    #         "AÇÃO DE APLICAÇÃO",
+    #         "TetoSaldo disponível",
+    #         "TetoPrevisto 2025",
+    #         "TetoPrevisto 2026",
+    #         "TetoPrevisto 2027",
+    #         "TetoTotalDisponivel",
+    #         "A Distribuir"
+    #     ]
+
+    #     # Filtra o DataFrame para ter só essas colunas (caso existam no DF)
+    #     df_uc = df_uc[[c for c in colunas if c in df_uc.columns]]
+
+    #     # Formata cada coluna numérica no padrão R$ e alinha à direita
+    #     def formata_real(valor):
+    #         return f"<div style='text-align: right;'>R$ {valor:,.2f}</div>" if pd.notnull(valor) else ""
+
+    #     # Para cada coluna que deve ser monetária, aplicar a formatação
+    #     colunas_numericas = [
+    #         "TetoSaldo disponível",
+    #         "TetoPrevisto 2025",
+    #         "TetoPrevisto 2026",
+    #         "TetoPrevisto 2027",
+    #         "TetoTotalDisponivel",
+    #         "A Distribuir"
+    #     ]
+    #     for col in colunas_numericas:
+    #         if col in df_uc.columns:
+    #             df_uc[col] = df_uc[col].apply(formata_real)
+
+    #     # Renomeia para exibir títulos mais amigáveis na tabela
+    #     df_uc.rename(columns={
+    #         "Unidade de Conservação": "Unidade de Conservação",
+    #         "AÇÃO DE APLICAÇÃO": "Ação de Aplicação",
+    #         "TetoSaldo disponível": "Teto Saldo Disponível",
+    #         "TetoPrevisto 2025": "Teto 2025",
+    #         "TetoPrevisto 2026": "Teto 2026",
+    #         "TetoPrevisto 2027": "Teto 2027",
+    #         "TetoTotalDisponivel": "Teto Total",
+    #         "A Distribuir": "Saldo a Distribuir"
+    #     }, inplace=True)
+
+    #     st.write("Unidades de Conservação elegíveis com recursos disponíveis para distribuição:")
+
+    #     # Converte o DataFrame em HTML, sem escapar tags (para alinhar à direita)
+    #     html_table = df_uc.to_html(escape=False, index=False)
+
+    #     # Renderiza via markdown, permitindo HTML
+    #     st.markdown(html_table, unsafe_allow_html=True)
+
+        
 
 
 
