@@ -10,6 +10,7 @@ def init_database():
     # 📌 Caminhos dos arquivos de dados e do banco
     json_path = "dados/base_iniciativas_consolidada.json"
     excel_path = "dados/base_iniciativas_resumos_sei.xlsx"
+    excel_path_elegiveis = "dados/base_iniciativas_elegiveis.xlsx"
     db_path = "database/app_data.db"
 
     # Credenciais do usuário admin (vêm do [Secrets] do Streamlit)
@@ -182,6 +183,71 @@ def init_database():
             FOREIGN KEY (cnuc) REFERENCES td_unidades(cnuc)
         )
     """)
+
+
+    # ----------------------------------------------------------------------------
+    # CRIA A NOVA TABELA tf_distribuicao_elegiveis
+    # ----------------------------------------------------------------------------
+    cursor.execute(""" DROP TABLE IF EXISTS tf_distribuicao_elegiveis """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tf_distribuicao_elegiveis (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            "DEMANDANTE (diretoria)" TEXT,
+            "Nome da Proposta/Iniciativa Estruturante" TEXT,
+            "AÇÃO DE APLICAÇÃO" TEXT,
+            "Unidade de Conservação" TEXT,
+            CNUC TEXT,
+            "TetoSaldo disponível" REAL,
+            "TetoPrevisto 2025" REAL,
+            "TetoPrevisto 2026" REAL,
+            "TetoPrevisto 2027" REAL
+        )
+    """)
+
+    # Lê o arquivo base_iniciativas_elegiveis.xlsx
+    df_elegiveis = pd.read_excel(excel_path_elegiveis, engine="openpyxl")
+
+    # Se quiser garantir que as colunas estão corretamente nomeadas:
+    colunas_elegiveis = [
+        "DEMANDANTE (diretoria)",
+        "Nome da Proposta/Iniciativa Estruturante",
+        "AÇÃO DE APLICAÇÃO",
+        "Unidade de Conservação",
+        "CNUC",
+        "TetoSaldo disponível",
+        "TetoPrevisto 2025",
+        "TetoPrevisto 2026",
+        "TetoPrevisto 2027"
+    ]
+
+    # Filtra as colunas necessárias (ou renomeie caso sejam diferentes)
+    df_distribuicao = df_elegiveis[colunas_elegiveis].copy()
+
+    # (Opcional) Se quiser preencher tetos nulos com zero:
+    df_distribuicao[
+        [
+            "TetoSaldo disponível",
+            "TetoPrevisto 2025",
+            "TetoPrevisto 2026",
+            "TetoPrevisto 2027"
+        ]
+    ] = df_distribuicao[
+        [
+            "TetoSaldo disponível",
+            "TetoPrevisto 2025",
+            "TetoPrevisto 2026",
+            "TetoPrevisto 2027"
+        ]
+    ].fillna(0)
+
+    # Popula a nova tabela tf_distribuicao_elegiveis
+    df_distribuicao.to_sql("tf_distribuicao_elegiveis", conn, if_exists="append", index=False)
+
+    conn.commit()
+    
+
+    print("✅ Banco de dados atualizado com a nova tabela tf_distribuicao_elegiveis!")
+
 
     # ----------------------------------------------------------------------------
     # 7) TABELA PRINCIPAL DE REGRAS DE NEGÓCIO
