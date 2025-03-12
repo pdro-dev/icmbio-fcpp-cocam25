@@ -830,118 +830,103 @@ with st.form("form_textos_resumo"):
 
 
 
-    # -------------------------------------------
+    # ---------------------------------------------------------
     # 6) UNIDADES DE CONSERVAÇÃO - Distribuição de Recursos
-    # -------------------------------------------
+    # ---------------------------------------------------------
 
     with tab_uc:
         st.subheader("Distribuição de Recursos por Eixo")
 
         conn = sqlite3.connect(DB_PATH)
-        row_dist = conn.execute("""
-            SELECT distribuicao_ucs
-            FROM tf_cadastro_regras_negocio
-            WHERE id_iniciativa = ?
-            ORDER BY data_hora DESC
-            LIMIT 1
-        """, (nova_iniciativa,)).fetchone()
 
-        query_fallback = """
-            SELECT 
-                "Unidade de Conservação" AS Unidade,
-                "AÇÃO DE APLICAÇÃO"      AS Acao,
-                "VALOR TOTAL ALOCADO"    AS "Valor Alocado"
-            FROM tf_cadastros_iniciativas
+        # 🔍 Carregar SOMENTE as colunas necessárias do banco,
+        # sem repetir TetoTotalDisponivel e "A Distribuir".
+        df_uc = pd.read_sql_query(
+            """
+            SELECT
+                id,
+                id_demandante,
+                id_iniciativa,
+                id_acao,
+                TetoTotalDisponivel
+            FROM tf_distribuicao_elegiveis
             WHERE id_iniciativa = ?
-            AND "VALOR TOTAL ALOCADO" > 0
-        """
-        df_unidades_raw = pd.read_sql_query(query_fallback, conn, params=[nova_iniciativa])
+            """,
+            conn,
+            params=[nova_iniciativa]
+        )
+
         conn.close()
 
-        df_db = pd.DataFrame()
-        if row_dist and row_dist[0]:
-            try:
-                dist_list = json.loads(row_dist[0])
-                df_db = pd.DataFrame(dist_list)
-            except:
-                df_db = pd.DataFrame()
+        # Criamos manualmente as colunas "Unidade", "Acao" e "A Distribuir"
+        df_uc["Unidade"] = "Unidade de Conservação"   # valor fixo
+        df_uc["Acao"] = "AÇÃO DE APLICAÇÃO"           # valor fixo
+        df_uc["A Distribuir"] = 0.00                  # inicia com zero, será calculado
 
-        if "ultima_iniciativa" not in st.session_state or st.session_state["ultima_iniciativa"] != nova_iniciativa:
-            st.session_state["ultima_iniciativa"] = nova_iniciativa
-            if not df_db.empty:
-                st.session_state["df_uc_editado"] = df_db.copy()
-            else:
-                st.session_state["df_uc_editado"] = df_unidades_raw.copy()
-
-        if df_unidades_raw.empty and df_db.empty:
-            st.warning("Nenhuma unidade de conservação encontrada para esta iniciativa.")
-            st.stop()
-
-        def recalcular_saldo():
-            data_dict = st.session_state["editor_uc"]
-            df_master = st.session_state["df_uc_editado"].copy()
-
-            edited_rows = data_dict.get("edited_rows", {})
-            for row_idx_str, changed_cols in edited_rows.items():
-                row_idx = int(row_idx_str)
-                for col_name, new_value in changed_cols.items():
-                    df_master.loc[row_idx, col_name] = new_value
-
-            df_master["Valor Alocado"] = pd.to_numeric(df_master.get("Valor Alocado", 0), errors="coerce").fillna(0)
-            colunas_eixos = [eixo["nome_eixo"] for eixo in st.session_state["eixos_tematicos"]]
-
-            for eixo_nome in colunas_eixos:
-                if eixo_nome not in df_master.columns:
-                    df_master[eixo_nome] = 0
-                df_master[eixo_nome] = pd.to_numeric(df_master[eixo_nome], errors="coerce").fillna(0)
-
-            df_master["Distribuir"] = df_master["Valor Alocado"] - df_master[colunas_eixos].sum(axis=1)
-
-            st.session_state["df_uc_editado"] = df_master
-
-        df_editavel = st.session_state["df_uc_editado"].copy()
-
-        colunas_fixas = ["Unidade", "Acao", "Valor Alocado"]
-        for col in colunas_fixas:
-            if col not in df_editavel.columns:
-                df_editavel[col] = 0
-
+        # 🔍 Obter os eixos temáticos selecionados pelo usuário
         colunas_eixos = [eixo["nome_eixo"] for eixo in st.session_state["eixos_tematicos"]]
-        for eixo_nome in colunas_eixos:
-            if eixo_nome not in df_editavel.columns:
-                df_editavel[eixo_nome] = 0
 
-        df_editavel["Valor Alocado"] = pd.to_numeric(df_editavel["Valor Alocado"], errors="coerce").fillna(0)
-        for eixo_nome in colunas_eixos:
-            df_editavel[eixo_nome] = pd.to_numeric(df_editavel[eixo_nome], errors="coerce").fillna(0)
-        df_editavel["Distribuir"] = df_editavel["Valor Alocado"] - df_editavel[colunas_eixos].sum(axis=1)
+        # Criar colunas para os eixos temáticos no DataFrame
+        for eixo in colunas_eixos:
+            if eixo not in df_uc.columns:  # evita duplicar
+                df_uc[eixo] = 0.00
 
-        # 🚀 **AGREGAR OS DADOS POR UNIDADE + AÇÃO**
-        df_editavel = df_editavel.groupby(["Unidade", "Acao"], as_index=False).sum()
+        # Funções auxiliares
+        def recalcular_a_distribuir():
+            df_uc["A Distribuir"] = df_uc["TetoTotalDisponivel"] - df_uc[colunas_eixos].sum(axis=1)
+            st.session_state["df_uc_editado"] = df_uc
 
-        colunas_ordenadas = colunas_fixas + ["Distribuir"] + colunas_eixos
-        df_editavel = df_editavel[colunas_ordenadas]
+        def salvar_dados_uc():
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            for _, row in st.session_state["df_uc_editado"].iterrows():
+                # Monta query com colunas de eixo
+                query = f"""
+                    UPDATE tf_distribuicao_elegiveis
+                    SET {', '.join([f'"{eixo}" = ?' for eixo in colunas_eixos])},
+                        "A Distribuir" = ?
+                    WHERE id = ?
+                """
+                valores = [row[eixo] for eixo in colunas_eixos] + [row["A Distribuir"], row["id"]]
+                cursor.execute(query, valores)
+            conn.commit()
+            conn.close()
+            st.success("✅ Distribuição de recursos salva com sucesso!")
 
-        # Exibir data_editor
+        # Recalcular saldo inicialmente
+        recalcular_a_distribuir()
+
+        # Monta coluna_config para st.data_editor
+        column_config = {
+            "Unidade": st.column_config.TextColumn("Unidade de Conservação", disabled=True),
+            "Acao": st.column_config.TextColumn("Ação de Aplicação", disabled=True),
+            "TetoTotalDisponivel": st.column_config.NumberColumn("Teto Total Disponível", disabled=True, format="accounting"),
+            "A Distribuir": st.column_config.NumberColumn("Saldo a Distribuir", disabled=True, format="accounting")
+        }
+        for eixo in colunas_eixos:
+            column_config[eixo] = st.column_config.NumberColumn(eixo, format="accounting")
+
+        # Ordena as colunas que serão exibidas
+        colunas_para_exibir = ["Unidade", "Acao", "TetoTotalDisponivel", "A Distribuir"] + colunas_eixos
+        df_exibicao = df_uc[colunas_para_exibir].copy()
+
+        def on_edit():
+            recalcular_a_distribuir()
+            st.rerun()
+
+        # Data Editor
         edited_df = st.data_editor(
-            df_editavel,
-            column_config={
-                "Unidade": st.column_config.TextColumn("Unidade de Conservação", disabled=True),
-                "Acao": st.column_config.TextColumn("Ação de Aplicação", disabled=True),
-                "Valor Alocado": st.column_config.NumberColumn("Valor Alocado", disabled=True),
-                "Distribuir": st.column_config.NumberColumn("Distribuir", disabled=True)
-            },
+            df_exibicao,
+            column_config=column_config,
             use_container_width=True,
             key="editor_uc",
-            on_change=recalcular_saldo,
+            on_change=on_edit,
             hide_index=True
         )
 
+        if st.button("💾 Salvar Distribuição de Recursos"):
+            salvar_dados_uc()
 
-        # # Exemplo: Botão p/ persistir no banco (ou pode ser salvo lá no "Salvar Alterações")
-        # if st.button("Salvar Distribuição"):
-        #     # Basta avisar. O 'salvar_dados_iniciativa' usará "st.session_state['df_uc_editado']"
-        #     st.success("Distribuição de recursos atualizada!")
 
 
 
@@ -1230,14 +1215,6 @@ with st.form("form_textos_resumo"):
             st.session_state["introducao"] = st.session_state["introducao"]
             st.session_state["justificativa"] = st.session_state["justificativa"]
             st.session_state["metodologia"] = st.session_state["metodologia"]
-
-            # salvar demais informações
-            st.session_state["demais_informacoes"] = {
-            "diretoria": diretoria_novo,
-            "coordenacao_geral": coord_geral_novo,
-            "coordenacao": coord_novo,
-            "demandante": demandante_novo
-            }
 
             
             # salvar eixos temáticos

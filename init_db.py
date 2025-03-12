@@ -219,7 +219,7 @@ def init_database():
 
 
     # ----------------------------------------------------------------------------
-    # CRIA A NOVA TABELA tf_distribuicao_elegiveis
+    # CRIA TABELA tf_distribuicao_elegiveis
     # ----------------------------------------------------------------------------
     cursor.execute(""" DROP TABLE IF EXISTS tf_distribuicao_elegiveis """)
     cursor.execute("""
@@ -233,14 +233,40 @@ def init_database():
             "TetoSaldo disponível" REAL,
             "TetoPrevisto 2025" REAL,
             "TetoPrevisto 2026" REAL,
-            "TetoPrevisto 2027" REAL
+            "TetoPrevisto 2027" REAL,
+            "TetoTotalDisponivel" REAL,
+            "A Distribuir" REAL
         )
     """)
+
 
     # Lê o arquivo base_iniciativas_elegiveis.xlsx
     df_elegiveis = pd.read_excel(excel_path_elegiveis, engine="openpyxl")
 
-    # Se quiser garantir que as colunas estão corretamente nomeadas:
+    # Garantir que os valores numéricos tenham até 2 casas decimais
+    colunas_numericas = [
+        "TetoSaldo disponível",
+        "TetoPrevisto 2025",
+        "TetoPrevisto 2026",
+        "TetoPrevisto 2027"
+    ]
+
+    # Converte os valores para float e arredonda para 2 casas decimais
+    for col in colunas_numericas:
+        df_elegiveis[col] = pd.to_numeric(df_elegiveis[col], errors="coerce").round(2).fillna(0.00)
+
+    # Criar a coluna "TetoTotalDisponivel" antes de inserir no banco
+    df_elegiveis["TetoTotalDisponivel"] = (
+        df_elegiveis["TetoSaldo disponível"] +
+        df_elegiveis["TetoPrevisto 2025"] +
+        df_elegiveis["TetoPrevisto 2026"] +
+        df_elegiveis["TetoPrevisto 2027"]
+    ).round(2)
+
+    # Inicializa a coluna "A Distribuir" como NULL
+    df_elegiveis["A Distribuir"] = None
+
+    # Define as colunas necessárias
     colunas_elegiveis = [
         "DEMANDANTE (diretoria)",
         "Nome da Proposta/Iniciativa Estruturante",
@@ -250,7 +276,9 @@ def init_database():
         "TetoSaldo disponível",
         "TetoPrevisto 2025",
         "TetoPrevisto 2026",
-        "TetoPrevisto 2027"
+        "TetoPrevisto 2027",
+        "TetoTotalDisponivel",
+        "A Distribuir"
     ]
 
     # Filtra as colunas necessárias (ou renomeie caso sejam diferentes)
@@ -276,9 +304,72 @@ def init_database():
     # Popula a nova tabela tf_distribuicao_elegiveis
     df_distribuicao.to_sql("tf_distribuicao_elegiveis", conn, if_exists="append", index=False)
 
-    conn.commit()
+
+    # ----------------------------------------------------------------------
+    # 1️⃣ Recuperar os processos da tabela `td_samge_processos`
+    # ----------------------------------------------------------------------
+    df_processos = pd.read_sql_query("SELECT nome FROM td_samge_processos", conn)
+    nomes_processos = [row["nome"] for _, row in df_processos.iterrows()]
+
+    # ----------------------------------------------------------------------
+    # 2️⃣ Adicionar colunas para cada processo na tabela `tf_distribuicao_elegiveis`
+    # ----------------------------------------------------------------------
+    cursor.execute("PRAGMA table_info(tf_distribuicao_elegiveis)")
+    colunas_existentes = {col[1] for col in cursor.fetchall()}
+
+    for processo in nomes_processos:
+        if processo not in colunas_existentes:
+            cursor.execute(f'ALTER TABLE tf_distribuicao_elegiveis ADD COLUMN "{processo}" REAL DEFAULT 0.00')
+
+
+    # ----------------------------------------------------------------------
+    # 3️⃣ Criar a coluna `TetoTotalDisponivel`, se não existir
+    # ----------------------------------------------------------------------
+    if "TetoTotalDisponivel" not in colunas_existentes:
+        cursor.execute('ALTER TABLE tf_distribuicao_elegiveis ADD COLUMN "TetoTotalDisponivel" REAL')
+
+    # Atualizar os valores de `TetoTotalDisponivel`
+    cursor.execute("""
+        UPDATE tf_distribuicao_elegiveis
+        SET TetoTotalDisponivel = COALESCE("TetoSaldo disponível", 0) +
+                                  COALESCE("TetoPrevisto 2025", 0) +
+                                  COALESCE("TetoPrevisto 2026", 0) +
+                                  COALESCE("TetoPrevisto 2027", 0)
+    """)
+
+    # ----------------------------------------------------------------------
+    # 4️⃣ Criar a coluna `"A Distribuir"`, se não existir (mas sem calcular ainda)
+    # ----------------------------------------------------------------------
+    if "A Distribuir" not in colunas_existentes:
+        cursor.execute('ALTER TABLE tf_distribuicao_elegiveis ADD COLUMN "A Distribuir" REAL NULL')
+
+    # popular a coluna "A Distribuir" com valores iguais a teto total disponível
+    cursor.execute("""
+        UPDATE tf_distribuicao_elegiveis
+        SET "A Distribuir" = TetoTotalDisponivel
+    """)
     
 
+    # ----------------------------------------------------------------------------
+    # Ajuste na Tabela tf_distribuicao_elegiveis para incluir os IDs
+    # ----------------------------------------------------------------------------
+    cursor.execute("PRAGMA table_info(tf_distribuicao_elegiveis)")
+    colunas_existentes = {col[1] for col in cursor.fetchall()}
+
+    # Criar as colunas de IDs se ainda não existirem
+    if "id_demandante" not in colunas_existentes:
+        cursor.execute('ALTER TABLE tf_distribuicao_elegiveis ADD COLUMN "id_demandante" INTEGER')
+
+    if "id_iniciativa" not in colunas_existentes:
+        cursor.execute('ALTER TABLE tf_distribuicao_elegiveis ADD COLUMN "id_iniciativa" INTEGER')
+
+    if "id_acao" not in colunas_existentes:
+        cursor.execute('ALTER TABLE tf_distribuicao_elegiveis ADD COLUMN "id_acao" INTEGER')
+
+    conn.commit()
+    
+    
+    print("✅ `tf_distribuicao_elegiveis` atualizado com novas colunas, sem cálculo automático para 'A Distribuir'!")
     print("✅ Banco de dados atualizado com a nova tabela tf_distribuicao_elegiveis!")
 
 
@@ -391,6 +482,55 @@ def init_database():
 
     # Salva na tabela fato
     df_base.to_sql("tf_cadastros_iniciativas", conn, if_exists="replace", index=False)
+
+
+
+    # ----------------------------------------------------------------------------
+    # Criar Mapeamento de IDs (para relacionar na tf_distribuicao_elegiveis)
+    # ----------------------------------------------------------------------------
+    id_maps = {}
+
+    for table, column_in_distribuicao, id_col, name_col in [
+        ("td_demandantes", "DEMANDANTE (diretoria)", "id_demandante", "nome_demandante"),
+        ("td_iniciativas", "Nome da Proposta/Iniciativa Estruturante", "id_iniciativa", "nome_iniciativa"),
+        ("td_acoes_aplicacao", "AÇÃO DE APLICAÇÃO", "id_acao", "nome_acao")
+    ]:
+        df_map = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+        
+        # 🔹 Normaliza os nomes para evitar erros por espaços extras ou maiúsculas/minúsculas
+        df_map[name_col] = df_map[name_col].astype(str).str.strip().str.lower()
+        
+        id_maps[table] = df_map.set_index(name_col)[id_col].to_dict()
+
+    # 🔍 Carregar os dados da tabela `tf_distribuicao_elegiveis`
+    df_distribuicao = pd.read_sql_query("SELECT * FROM tf_distribuicao_elegiveis", conn)
+
+    # 🔹 Normalizar os nomes das colunas na tabela de distribuição de elegíveis
+    df_distribuicao["DEMANDANTE (diretoria)"] = df_distribuicao["DEMANDANTE (diretoria)"].astype(str).str.strip().str.lower()
+    df_distribuicao["Nome da Proposta/Iniciativa Estruturante"] = df_distribuicao["Nome da Proposta/Iniciativa Estruturante"].astype(str).str.strip().str.lower()
+    df_distribuicao["AÇÃO DE APLICAÇÃO"] = df_distribuicao["AÇÃO DE APLICAÇÃO"].astype(str).str.strip().str.lower()
+
+    # 🔹 Substitui os valores por IDs corretos
+    df_distribuicao["id_demandante"] = df_distribuicao["DEMANDANTE (diretoria)"].map(id_maps["td_demandantes"]).fillna(-1).astype(int)
+    df_distribuicao["id_iniciativa"] = df_distribuicao["Nome da Proposta/Iniciativa Estruturante"].map(id_maps["td_iniciativas"]).fillna(-1).astype(int)
+    df_distribuicao["id_acao"] = df_distribuicao["AÇÃO DE APLICAÇÃO"].map(id_maps["td_acoes_aplicacao"]).fillna(-1).astype(int)
+
+    # 🔹 Salvar os dados atualizados na tabela
+    df_distribuicao.to_sql("tf_distribuicao_elegiveis", conn, if_exists="replace", index=False)
+
+    # 🔍 Verificar se ainda há IDs inválidos
+    df_check = pd.read_sql_query("""
+        SELECT * FROM tf_distribuicao_elegiveis 
+        WHERE id_demandante = -1 OR id_iniciativa = -1 OR id_acao = -1
+    """, conn)
+
+    if df_check.empty:
+        print("✅ Todos os IDs foram mapeados corretamente!")
+    else:
+        print("⚠️ Existem registros sem ID correto! Verifique os nomes na tabela.")
+
+    conn.commit()
+
 
     # ----------------------------------------------------------------------------
     # 11) CARREGA INSUMOS A PARTIR DO EXCEL base_insumos.xlsx
@@ -532,6 +672,37 @@ def init_samge_database():
     processos.columns = ["id_p", "nome", "descricao", "explicacao", "macroprocesso_id"]
     processos.to_sql("td_samge_processos", conn, if_exists="replace", index=False)
 
+    DB_PATH = "database/app_data.db"
+    
+    def remover_processos_duplicados():
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        # 🔍 Identificar registros duplicados (com mesmo id_p)
+        df_processos = pd.read_sql_query("SELECT * FROM td_samge_processos", conn)
+
+        if df_processos.duplicated(subset=["id_p"]).any():
+            print("⚠️ Processos duplicados encontrados! Removendo duplicatas...")
+
+            # Mantemos apenas o primeiro registro de cada `id_p`
+            df_processos = df_processos.drop_duplicates(subset=["id_p"], keep="first")
+
+            # Apaga os registros duplicados da tabela
+            cursor.execute("DELETE FROM td_samge_processos")
+
+            # Insere novamente os registros sem duplicatas
+            df_processos.to_sql("td_samge_processos", conn, if_exists="append", index=False)
+
+            conn.commit()
+            print("✅ Processos duplicados removidos!")
+        else:
+            print("✅ Nenhum processo duplicado encontrado.")
+
+        conn.close()
+
+    # Executar a remoção de duplicatas
+    remover_processos_duplicados()
+
     # ----------------------------------------------------------------------------
     # Insere Ações de Manejo
     # ----------------------------------------------------------------------------
@@ -551,5 +722,5 @@ def init_samge_database():
 
 
 if __name__ == "__main__":
-    init_database()
     init_samge_database()
+    init_database()
