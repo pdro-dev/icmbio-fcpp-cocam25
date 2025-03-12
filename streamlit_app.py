@@ -25,18 +25,18 @@ st.set_page_config(
 
 st.markdown(
     """
-    # SAMGePlan
-
-    #### Cadastro de Iniciativas, Projetos e Outros Instrumentos
-    *Construção de Regras de Negócio (financeiro | insumos)*
-
+    # CICA
+ 
+    #### Cadastro de Iniciativas Estruturantes da Compensação Ambiental
+    *Módulo de Construção de Regras de Negócio (financeiro | insumos)* - SAMGePlan 2025
+ 
     ---
-
+ 
     #### Planejamento Compensação Ambiental - FCA 2025
-    *Iniciativas Estruturantes*
-
+    *Iniciativas Estruturantes 2024/25*
+ 
     ---
-
+ 
     """
 )
 

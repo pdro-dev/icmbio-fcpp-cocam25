@@ -49,12 +49,7 @@ else:
         df = df_filtrado
 
 
-    # debug 
-    st.write(df)
-    st.write(st.session_state["setor"])
-    st.write(st.session_state["perfil"])
-
-    
+ 
 
 
 
